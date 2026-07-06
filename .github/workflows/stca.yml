@@ -1,0 +1,49 @@
+name: STCA Pipeline
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master]
+jobs:
+  stca:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install STCA
+        run: pip install --user git+https://github.com/Daveshvats/QCSA.git
+      - name: Run STCA on PR diff
+        if: github.event_name == 'pull_request'
+        run: |
+          stca check --sarif --output stca.sarif --strictness 5 .
+      - name: Run STCA on full repo (push)
+        if: github.event_name == 'push'
+        run: |
+          stca check --sarif --output stca.sarif --full --strictness 5 .
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: stca.sarif
+      - name: Fail on critical
+        if: always()
+        run: |
+          python3 -c "
+          import json
+          with open('stca.sarif') as f:
+              data = json.load(f)
+          for run in data.get('runs', []):
+              for result in run.get('results', []):
+                  if (result.get('level', 'note').lower()) == 'critical':
+                      print('STCA: critical finding — failing build')
+                      exit(1)
+          print('STCA: no critical findings')
+          "

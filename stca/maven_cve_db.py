@@ -44,6 +44,92 @@ BUNDLED_CVES = [
     MavenCVE("CVE-2023-33201","org.bouncycastle:bcprov-jdk15on","<1.74","1.74","high","CWE-203","Bouncy Castle LDAP injection","present_not_exploitable"),
     MavenCVE("CVE-2020-10683","org.dom4j:dom4j","<2.1.3","2.1.3","critical","CWE-611","dom4j XXE","present_not_exploitable"),
     MavenCVE("CVE-2020-13956","org.apache.httpcomponents:httpclient","<4.5.13","4.5.13","medium","CWE-20","HttpClient URI parsing SSRF","present_not_exploitable"),
+    # === Additional CVEs for comprehensive coverage ===
+    # Spring Framework additional
+    MavenCVE("CVE-2022-22965","org.springframework:spring-core","<5.3.18","5.3.18","critical","CWE-470","Spring4Shell (core)","exploitable"),
+    MavenCVE("CVE-2022-22950","org.springframework:spring-core","<5.3.17","5.3.17","medium","CWE-770","Spring Expression DoS (core)","present_not_exploitable"),
+    MavenCVE("CVE-2021-22118","org.springframework:spring-web","<5.3.8","5.3.8","high","CWE-126","Spring Web DoS","present_not_exploitable"),
+    MavenCVE("CVE-2020-5421","org.springframework:spring-web","<5.2.16","5.2.16","medium","CWE-352","Spring Web CSRF","present_not_exploitable"),
+    # Spring Boot
+    MavenCVE("CVE-2022-22965","org.springframework.boot:spring-boot","<2.6.6","2.6.6","critical","CWE-470","Spring4Shell (boot)","exploitable"),
+    # Jackson additional
+    MavenCVE("CVE-2020-36518","com.fasterxml.jackson.core:jackson-databind","<2.13.0","2.13.0","high","CWE-787","Jackson DoS StackOverflow","exploitable"),
+    MavenCVE("CVE-2019-12384","com.fasterxml.jackson.core:jackson-databind","<2.9.10.1","2.9.10.1","high","CWE-502","Jackson deserialization","present_not_exploitable"),
+    MavenCVE("CVE-2018-7489","com.fasterxml.jackson.core:jackson-databind","<2.9.5","2.9.5","critical","CWE-502","Jackson deserialization RCE","present_not_exploitable"),
+    MavenCVE("CVE-2017-7525","com.fasterxml.jackson.core:jackson-databind","<2.8.10","2.8.10","critical","CWE-502","Jackson deserialization RCE","present_not_exploitable"),
+    # Log4j additional
+    MavenCVE("CVE-2021-44228","org.apache.logging.log4j:log4j-to-slf4j","<2.16.0","2.16.0","high","CWE-502","Log4j-to-slf4j JNDI","present_not_exploitable"),
+    # Apache Commons
+    MavenCVE("CVE-2015-7501","commons-collections:commons-collections","<3.2.2","3.2.2","critical","CWE-502","Commons Collections RCE","present_not_exploitable"),
+    MavenCVE("CVE-2015-7501","org.apache.commons:commons-collections4","<4.1","4.1","critical","CWE-502","Commons Collections4 RCE","present_not_exploitable"),
+    MavenCVE("CVE-2022-42889","org.apache.commons:commons-text","1.5-1.9","1.10.0","critical","CWE-94","Text4Shell","exploitable"),
+    MavenCVE("CVE-2021-37507","org.apache.commons:commons-configuration","<1.10","1.10","high","CWE-611","Commons Config XXE","present_not_exploitable"),
+    # Tomcat
+    MavenCVE("CVE-2023-46589","org.apache.tomcat.embed:tomcat-embed-core","<9.0.83","9.0.83","medium","CWE-444","Tomcat HTTP request smuggling","present_not_exploitable"),
+    MavenCVE("CVE-2023-42794","org.apache.tomcat.embed:tomcat-embed-core","<9.0.81","9.0.81","low","CWE-400","Tomcat DoS","present_not_exploitable"),
+    MavenCVE("CVE-2022-42252","org.apache.tomcat.embed:tomcat-embed-core","<10.0.27","10.0.27","low","CWE-444","Tomcat request smuggling","present_not_exploitable"),
+    MavenCVE("CVE-2022-29885","org.apache.tomcat.embed:tomcat-embed-core","<10.0.21","10.0.21","medium","CWE-400","Tomcat EncryptInterceptor","present_not_exploitable"),
+    # Hibernate
+    MavenCVE("CVE-2019-14900","org.hibernate:hibernate-core","<5.4.24.Final","5.4.24.Final","high","CWE-89","Hibernate HQL injection","present_not_exploitable"),
+    MavenCVE("CVE-2020-25638","org.hibernate:hibernate-core","<5.4.24.Final","5.4.24.Final","high","CWE-89","Hibernate SQL injection","present_not_exploitable"),
+    # Netty
+    MavenCVE("CVE-2023-44487","io.netty:netty-codec-http2","<4.1.100.Final","4.1.100.Final","high","CWE-400","HTTP/2 Rapid Reset","present_not_exploitable"),
+    MavenCVE("CVE-2023-34462","io.netty:netty-common","<4.1.94.Final","4.1.94.Final","medium","CWE-400","Netty DoS SslHandler","present_not_exploitable"),
+    MavenCVE("CVE-2022-24823","io.netty:netty-common","<4.1.86.Final","4.1.86.Final","medium","CWE-400","Netty TempFile DoS","present_not_exploitable"),
+    # JJWT
+    MavenCVE("CVE-2024-31033","io.jsonwebtoken:jjwt","<0.12.0","0.12.0","high","CWE-347","JJWT signature confusion","present_not_exploitable"),
+    MavenCVE("CVE-2024-31033","io.jsonwebtoken:jjwt-impl","<0.12.0","0.12.0","high","CWE-347","JJWT signature confusion (impl)","present_not_exploitable"),
+    MavenCVE("CVE-2024-31033","io.jsonwebtoken:jjwt-jackson","<0.12.0","0.12.0","high","CWE-347","JJWT signature confusion (jackson)","present_not_exploitable"),
+    # SnakeYAML
+    MavenCVE("CVE-2022-1471","org.yaml:snakeyaml","<2.0","2.0","critical","CWE-502","SnakeYAML RCE Constructor","present_not_exploitable"),
+    MavenCVE("CVE-2022-38751","org.yaml:snakeyaml","<1.32","1.32","high","CWE-787","SnakeYAML DoS","present_not_exploitable"),
+    MavenCVE("CVE-2022-38752","org.yaml:snakeyaml","<1.32","1.32","high","CWE-787","SnakeYAML DoS","present_not_exploitable"),
+    # dom4j
+    MavenCVE("CVE-2020-10683","org.dom4j:dom4j","<2.1.3","2.1.3","critical","CWE-611","dom4j XXE","present_not_exploitable"),
+    # Bouncy Castle
+    MavenCVE("CVE-2023-33201","org.bouncycastle:bcprov-jdk15on","<1.74","1.74","high","CWE-203","Bouncy Castle LDAP injection","present_not_exploitable"),
+    MavenCVE("CVE-2023-33201","org.bouncycastle:bcprov-jdk18on","<1.74","1.74","high","CWE-203","Bouncy Castle LDAP injection (jdk18)","present_not_exploitable"),
+    MavenCVE("CVE-2024-29857","org.bouncycastle:bcprov-jdk18on","<1.78","1.78","medium","CWE-400","Bouncy Castle DoS","present_not_exploitable"),
+    # Apache POI
+    MavenCVE("CVE-2022-26336","org.apache.poi:poi","<5.2.3","5.2.3","medium","CWE-787","Apache POI DoS","present_not_exploitable"),
+    MavenCVE("CVE-2022-26336","org.apache.poi:poi-ooxml","<5.2.3","5.2.3","medium","CWE-787","Apache POI OOXML DoS","present_not_exploitable"),
+    MavenCVE("CVE-2019-12415","org.apache.poi:poi","<4.1.1","4.1.1","medium","CWE-611","Apache POI XXE","present_not_exploitable"),
+    # PostgreSQL JDBC
+    MavenCVE("CVE-2022-31197","org.postgresql:postgresql","<42.4.1","42.4.1","high","CWE-89","PostgreSQL JDBC SQLi","present_not_exploitable"),
+    MavenCVE("CVE-2022-41946","org.postgresql:postgresql","<42.4.3","42.4.3","medium","CWE-200","PostgreSQL JDBC info disclosure","present_not_exploitable"),
+    MavenCVE("CVE-2024-1597","org.postgresql:postgresql","<42.7.2","42.7.2","critical","CWE-89","PostgreSQL JDBC SQLi (PreparedStatement)","exploitable"),
+    # OkHttp
+    MavenCVE("CVE-2023-3635","com.squareup.okhttp3:okhttp","<4.12.0","4.12.0","high","CWE-400","OkHttp DoS multipart","present_not_exploitable"),
+    # jsoup
+    MavenCVE("CVE-2022-36033","org.jsoup:jsoup","<1.15.3","1.15.3","medium","CWE-79","jsoup Cleaner XSS bypass","present_not_exploitable"),
+    # iText
+    MavenCVE("CVE-2017-9096","com.itextpdf:itextpdf","<5.5.12","5.5.12","high","CWE-611","iText 5.x XXE","present_not_exploitable"),
+    MavenCVE("CVE-2017-9096","com.itextpdf:itext7-core","<7.1.12","7.1.12","high","CWE-611","iText 7.x XXE","present_not_exploitable"),
+    # Woodstox
+    MavenCVE("CVE-2022-40152","com.fasterxml.woodstox:woodstox-core","<6.4.0","6.4.0","high","CWE-787","Woodstox XML OOB write","present_not_exploitable"),
+    # Apache HTTP Components
+    MavenCVE("CVE-2020-13956","org.apache.httpcomponents:httpclient","<4.5.13","4.5.13","medium","CWE-20","HttpClient SSRF","present_not_exploitable"),
+    MavenCVE("CVE-2023-37256","org.apache.httpcomponents:httpclient","<4.5.14","4.5.14","medium","CWE-113","HttpClient response splitting","present_not_exploitable"),
+    # Gson
+    MavenCVE("CVE-2022-25647","com.google.code.gson:gson","<2.8.9","2.8.9","medium","CWE-502","Gson deserialization DoS","present_not_exploitable"),
+    # xerces
+    MavenCVE("CVE-2022-23437","xerces:xercesImpl","<2.12.2","2.12.2","medium","CWE-611","Xerces XXE","present_not_exploitable"),
+    # Apache CXF
+    MavenCVE("CVE-2022-46364","org.apache.cxf:cxf-core","<3.5.5","3.5.5","critical","CWE-502","CXF SSRF","present_not_exploitable"),
+    # Struts
+    MavenCVE("CVE-2023-50164","org.apache.struts:struts2-core","<2.5.33","2.5.33","critical","CWE-918","Struts2 file upload RCE","exploitable"),
+    MavenCVE("CVE-2017-5638","org.apache.struts:struts2-core","<2.3.32","2.3.32","critical","CWE-94","Struts2 RCE (Content-Type)","present_not_exploitable"),
+    # Shiro
+    MavenCVE("CVE-2022-32532","org.apache.shiro:shiro-core","<1.9.1","1.9.1","high","CWE-287","Shiro auth bypass","present_not_exploitable"),
+    MavenCVE("CVE-2020-17523","org.apache.shiro:shiro-core","<1.7.0","1.7.0","critical","CWE-287","Shiro auth bypass (whitespace)","present_not_exploitable"),
+    # Spring Security
+    MavenCVE("CVE-2022-22978","org.springframework.security:spring-security-core","<5.6.5","5.6.5","medium","CWE-863","Spring Security RegexRequestMatcher bypass","present_not_exploitable"),
+    # Velocity
+    MavenCVE("2020-13936","org.apache.velocity:velocity-engine-core","<2.3","2.3","critical","CWE-94","Velocity RCE","present_not_exploitable"),
+    # Thymeleaf
+    MavenCVE("CVE-2023-38286","org.thymeleaf:thymeleaf","<3.1.2.RELEASE","3.1.2.RELEASE","medium","CWE-1333","Thymeleaf SSTI","present_not_exploitable"),
+    # Lombok (not a CVE but security concern)
+    MavenCVE("CVE-2021-42550","ch.qos.logback:logback-classic","<1.2.9","1.2.9","high","CWE-94","Logback JNDI RCE","present_not_exploitable"),
 ]
 
 SPRING_BOOT_BOM_VERSIONS = {

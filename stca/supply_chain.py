@@ -206,6 +206,24 @@ def analyze_supply_chain(repo_root, project_license="MIT"):
                 findings.append(SupplyChainIssue("maven_cve", cf["package"], cf["version"],
                     f"{cf['cve_id']}: {cf['description']}", cf["severity"], cf["fix"], 0.9, cf["cve_id"]))
     except: pass
+    # Unified CVE DB (npm, PyPI, Go, etc. via OSV.dev)
+    try:
+        from .unified_cve_db import UnifiedCVEDatabase, scan_package_json_unified, scan_requirements_unified
+        cve_db = UnifiedCVEDatabase()
+        # npm
+        pkg_json = repo_root / "package.json"
+        if pkg_json.exists():
+            for cf in scan_package_json_unified(pkg_json, cve_db):
+                findings.append(SupplyChainIssue("npm_cve", cf["package"], cf["version"],
+                    f"{cf['cve_id']}: {cf['description']}", cf["severity"], cf["fix"], 0.9, cf["cve_id"]))
+        # PyPI
+        for req_name in ("requirements.txt", "requirements-prod.txt"):
+            req_file = repo_root / req_name
+            if req_file.exists():
+                for cf in scan_requirements_unified(req_file, cve_db):
+                    findings.append(SupplyChainIssue("pypi_cve", cf["package"], cf["version"],
+                        f"{cf['cve_id']}: {cf['description']}", cf["severity"], cf["fix"], 0.9, cf["cve_id"]))
+    except: pass
     sbom = _format_cyclonedx(deps, repo_root)
     return findings, sbom
 

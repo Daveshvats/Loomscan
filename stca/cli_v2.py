@@ -277,6 +277,53 @@ def rule_lint_cmd(rules_dir: str):
 # 13. gnn
 # =============================================================================
 
+@click.command("update-cves")
+@click.option("--repo", default=".", help="Repo to scan for dependencies")
+@click.option("--prune", is_flag=True, help="Prune stale cache entries")
+@click.option("--stats", "show_stats", is_flag=True, help="Show cache stats only")
+def update_cves_cmd(repo: str, prune: bool, show_stats: bool):
+    """Update CVE database from OSV.dev (all ecosystems).
+
+    Queries OSV.dev API for Maven, npm, PyPI, Go, Cargo, Gem, Composer.
+    Results cached in SQLite with 7-day TTL.
+    """
+    from .unified_cve_db import UnifiedCVEDatabase
+    cve_db = UnifiedCVEDatabase()
+    if show_stats:
+        click.echo(f"CVE cache stats: {cve_db.stats()}")
+        return
+    if prune:
+        cve_db.prune()
+        click.echo("Pruned stale cache entries.")
+        click.echo(f"Stats after prune: {cve_db.stats()}")
+        return
+    repo_root = Path(repo).resolve()
+    click.echo(f"Scanning dependencies in {repo_root}...")
+    from .supply_chain import (_scan_pip_requirements, _scan_pyproject, _scan_package_json,
+        _scan_go_mod, _scan_pom_xml, _scan_cargo_toml, _scan_gemfile, _scan_gradle, _scan_composer_json)
+    deps = []
+    deps += _scan_pip_requirements(repo_root)
+    deps += _scan_pyproject(repo_root)
+    deps += _scan_package_json(repo_root)
+    deps += _scan_go_mod(repo_root)
+    deps += _scan_pom_xml(repo_root)
+    deps += _scan_cargo_toml(repo_root)
+    deps += _scan_gemfile(repo_root)
+    deps += _scan_gradle(repo_root)
+    deps += _scan_composer_json(repo_root)
+    eco_map = {"pypi":"PyPI","npm":"npm","go":"Go","maven":"Maven","cargo":"Cargo","gem":"Gem","composer":"Composer"}
+    packages = [(eco_map.get(d.ecosystem, d.ecosystem), d.name, d.version) for d in deps if d.version != "latest"]
+    click.echo(f"Found {len(packages)} packages across {len(set(e for e,_,_ in packages))} ecosystems")
+    click.echo("Querying OSV.dev (this may take 30-60s)...")
+    cves = cve_db.update_all(packages)
+    click.echo(f"\nFound {len(cves)} CVEs across all packages")
+    click.echo(f"Cache stats: {cve_db.stats()}")
+    from collections import Counter
+    sev_counts = Counter(c.severity for c in cves)
+    click.echo(f"By severity: {dict(sev_counts)}")
+    for cve in cves[:20]:
+        click.echo(f"  [{cve.severity.upper()}] {cve.cve_id}: {cve.package}@{cve.version} -> fix: {cve.fixed_version}")
+
 @click.command("gnn")
 @click.option("--repo", default=".", help="Repository root")
 @click.option("--threshold", default=0.5, help="Risk-score threshold (0..1)")
@@ -520,7 +567,7 @@ _V2_COMMANDS = [
     lsp_cmd, pre_commit_cmd, rule_lint_cmd, gnn_cmd, similar_cmd,
     trace_cmd, code_quality_cmd, config_scan_cmd, maven_cve_cmd,
     ast_analysis_cmd, taint_analysis_cmd, source_discovery_cmd,
-    js_quality_cmd, optimize_cmd, js_multiline_cmd,
+    js_quality_cmd, optimize_cmd, js_multiline_cmd, update_cves_cmd,
 ]
 
 

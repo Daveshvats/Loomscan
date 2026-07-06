@@ -274,6 +274,102 @@ JS_PATTERNS: List[Tuple[str, str, str, str, str, str]] = [
         "warning", "CWE-862",
         "Check: if (!isJwtValid(token)) return <Navigate to='/login' />",
     ),
+    # === CRIT-7: masked: false API request ===
+    (
+        "js-masked-false-api",
+        r'masked\s*[:=]\s*["\']false["\']',
+        "API request explicitly asks for unmasked data — PII exfiltration risk (CWE-200). Server should decide masking, not client.",
+        "critical", "CWE-200",
+        "Remove masked: false from API request. Let server decide based on user role.",
+    ),
+    # === CRIT-10: PII sent to user-controlled email ===
+    (
+        "js-pii-to-user-email",
+        r'(?:mailTo|sendEmail|sendMail|email.*url|url.*email|BASE_URL.*sendEmail|org/sendEmail)',
+        "PII/employee data sent to user-controlled email address — no recipient validation (CWE-200). Verify email against allowlist.",
+        "critical", "CWE-200",
+        "Validate email against allowlist before sending. Use server-side email verification.",
+    ),
+    # === Cross-portal token confusion ===
+    (
+        "js-cross-portal-token",
+        r'(?:detectPortal|portal)\s*(?:===?|!==?)\s*(?:["\'](?:camp|reporting|feedback|attendance|offsite)["\'])',
+        "Cross-portal token confusion — interceptor determines portal from URL, not token claims (CWE-863)",
+        "high", "CWE-863",
+        "Verify token belongs to current portal via server-side check, not URL parsing",
+    ),
+    # === Roles without null guard ===
+    (
+        "js-roles-no-null-guard",
+        r'(?:roles|role)\s*\.\s*(?:includes|indexOf|find)\s*\(',
+        "roles.includes() without null guard — TypeError if roles is undefined (CWE-754)",
+        "medium", "CWE-754",
+        "Add null check: if (roles && roles.includes(role)) { ... }",
+    ),
+    # === Cross-portal token acceptance ===
+    (
+        "js-cross-portal-token-acceptance",
+        r'setupAxiosAuth|interceptors\.request\.use',
+        "Axios interceptor — verify token is validated for current portal (CWE-863)",
+        "medium", "CWE-863",
+        "Verify token portal claim matches current portal before sending",
+    ),
+    # === Shared refresh token promise ===
+    (
+        "js-shared-refresh-promise",
+        r'(?:refreshPromise|refreshTokenPromise|refreshPromiseInstance)\s*=',
+        "Shared refresh-token promise — race condition if multiple requests refresh simultaneously (CWE-362)",
+        "high", "CWE-362",
+        "Use a mutex or queue to serialize refresh attempts",
+    ),
+    # === createOrgCredentials without role check ===
+    (
+        "js-create-credentials-no-check",
+        r'(?:createOrgCredentials|createCredentials|orgCredentials)',
+        "Credential creation page — verify REPORTING_ADMIN role is checked (CWE-862)",
+        "high", "CWE-862",
+        "Add role check: if (!hasRole('REPORTING_ADMIN')) redirect to /login",
+    ),
+    # === CryptoJS usage ===
+    (
+        "js-cryptojs-usage",
+        r'\bCryptoJS\.',
+        "Client-side crypto (CryptoJS) — key ships in bundle, anyone can decrypt (CWE-327)",
+        "high", "CWE-327",
+        "Move all encryption to server-side. Remove CryptoJS from client bundle.",
+    ),
+    # === Role from localStorage ===
+    (
+        "js-role-from-localstorage",
+        r'localStorage\.getItem\s*\(\s*["\'](?:ROLE|ROLES|USER_ROLE|ROLE_ID)',
+        "User role read from localStorage — user can forge any role (CWE-863)",
+        "critical", "CWE-863",
+        "Get role from server-side JWT claims, not localStorage",
+    ),
+    # === Unrestricted file upload ===
+    (
+        "js-unrestricted-upload",
+        r'(?:accept|allowedTypes|fileType)\s*[:=]\s*(?:\[\s*\]|["\']\*["\']|undefined)',
+        "File upload with no type restriction — allows arbitrary file types (CWE-434)",
+        "high", "CWE-434",
+        "Restrict to specific MIME types: accept={['image/png', 'image/jpeg']}",
+    ),
+    # === CSV injection ===
+    (
+        "js-csv-injection",
+        r'(?:convertToCSV|generateCSV|exportCSV)\s*\(',
+        "CSV export without formula-injection sanitization — =cmd| cells execute in Excel (CWE-1236)",
+        "medium", "CWE-1236",
+        "Prefix cells starting with =, +, -, @ with single quote",
+    ),
+    # === CSV no escape ===
+    (
+        "js-csv-no-escape",
+        r'(?:convertToCSV|generateCSV|exportCSV)\s*\(',
+        "CSV export without proper escaping — commas/newlines in data break parsing (CWE-1286)",
+        "medium", "CWE-1286",
+        "Wrap fields containing commas/newlines in double quotes",
+    ),
 ]
 
 

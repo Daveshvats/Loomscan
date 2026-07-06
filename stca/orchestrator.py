@@ -168,12 +168,25 @@ class Orchestrator:
                 result.layer_timings[layer.name] = elapsed
                 result.layers_run.append(layer.name)
 
-        # Dedupe
+        # Dedupe — v2.9: normalized dedup that strips L0.{category}. prefix
+        # so the same finding from multiple scanners (crypto/concurrency/auth/etc)
+        # collapses into one
         seen = set()
         unique_findings: List[Finding] = []
         for f in result.findings:
-            if f.fingerprint not in seen:
-                seen.add(f.fingerprint)
+            # Normalize rule_id for dedup: strip "L0.{category}." prefix
+            normalized_rule = f.rule_id
+            parts = f.rule_id.split(".")
+            if len(parts) > 2 and parts[0] == "L0" and parts[1] in (
+                "state", "concurrency", "crypto", "modern", "idor", "cq", "biz",
+                "auth", "ast", "taint"
+            ):
+                normalized_rule = ".".join(parts[2:])
+            # Also normalize file path (remove any leading ./)
+            normalized_file = f.file.lstrip("./")
+            dedup_key = (normalized_rule, normalized_file, f.start_line)
+            if dedup_key not in seen:
+                seen.add(dedup_key)
                 unique_findings.append(f)
         result.findings = unique_findings
 
@@ -221,6 +234,52 @@ class Orchestrator:
             result.findings, self.repo_root, self.fp_learner, self.calibrator
         )
         result.precision_stats = precision_stats
+
+        # v2.8: Counterfactual mutation FP filtering
+        # Mutates code (removes suspect line) and re-runs detector to verify
+        try:
+            from .counterfactual import CounterfactualMutator
+            mutator = CounterfactualMutator()
+            # Only run on high-confidence findings to avoid slowdown
+            high_conf_findings = [f for f in result.findings if f.confidence >= 0.7]
+            removed_count = 0
+            for finding in high_conf_findings[:200]:  # v2.9: increased from 50 to 200
+                try:
+                    file_path = self.repo_root / finding.file
+                    if not file_path.exists():
+                        continue
+                    # Quick line-removal check
+                    result_mut = mutator.verify_finding(finding, file_path,
+                        lambda p: self._quick_recheck(p, finding))
+                    if result_mut.finding_disappeared and result_mut.mutation_strategy == "line_removal":
+                        finding.confidence = min(finding.confidence - 0.3, 0.99)
+                        if finding.confidence < 0.3:
+                            finding.confidence = 0.1
+                            removed_count += 1
+                except Exception:
+                    pass
+            if removed_count > 0:
+                result.findings = [f for f in result.findings if f.confidence >= 0.3]
+        except Exception:
+            pass
+
+        # v2.9: Final normalized dedup — collapse cross-scanner duplicates
+        seen = set()
+        unique_findings: List[Finding] = []
+        for f in result.findings:
+            normalized_rule = f.rule_id
+            parts = f.rule_id.split(".")
+            if len(parts) > 2 and parts[0] == "L0" and parts[1] in (
+                "state", "concurrency", "crypto", "modern", "idor", "cq", "biz",
+                "auth", "ast", "taint"
+            ):
+                normalized_rule = ".".join(parts[2:])
+            normalized_file = f.file.lstrip("./")
+            dedup_key = (normalized_rule, normalized_file, f.start_line)
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+                unique_findings.append(f)
+        result.findings = unique_findings
 
         # Strictness filter
         result.findings = filter_findings_by_strictness(result.findings, self.strictness)
@@ -832,6 +891,37 @@ class Orchestrator:
         except Exception:
             pass
         return findings
+
+    def _quick_recheck(self, file_path: Path, original_finding) -> List:
+        """Quick re-check of a file for counterfactual mutation testing.
+
+        Re-runs the relevant scanner on the mutated file and returns findings
+        of the same rule_id. If no findings, the original was likely a TP.
+        """
+        results = []
+        rule_id = original_finding.rule_id
+        try:
+            if "L0.crypto." in rule_id or "CRYPTO" in rule_id:
+                from .multi_lang import scan_crypto_multi
+                results = scan_crypto_multi(file_path, self.repo_root)
+            elif "L0.auth." in rule_id or "AUTH" in rule_id:
+                from .multi_lang import scan_auth_multi
+                results = scan_auth_multi(file_path, self.repo_root)
+            elif "L0.idor." in rule_id or "IDOR" in rule_id:
+                from .multi_lang import scan_idor_multi
+                results = scan_idor_multi(file_path, self.repo_root)
+            elif "L0.concurrency." in rule_id or "CONC" in rule_id:
+                from .multi_lang import scan_concurrency_multi
+                results = scan_concurrency_multi(file_path, self.repo_root)
+            elif "L0.cq." in rule_id or "CQ-" in rule_id:
+                from .code_quality import analyze_code_quality
+                results = analyze_code_quality(file_path, self.repo_root)
+            else:
+                # Generic: return empty (can't re-check unknown rule type)
+                pass
+        except Exception:
+            pass
+        return results
 
     def _run_v2_analyzers(self) -> List[Finding]:
         """Run all v2 analyzers: multi-lang patterns, code quality, config, IaC, supply chain."""

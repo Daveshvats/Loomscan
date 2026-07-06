@@ -39,6 +39,11 @@ PROPERTIES_RULES = [
     ("CFG-AWS-CREDENTIALS", r'(?:aws\.secret-key|aws\.access-key-id)\s*=\s*(?!.*\$\{).+', "critical", "AWS credentials hardcoded", "Use IAM roles", "CWE-798", 0.95),
     ("CFG-SESSION-COOKIE-INSECURE", r'server\.servlet\.session\.cookie\.secure\s*=\s*false', "high", "Session cookie not secure", "Set true", "CWE-614", 0.85),
     ("CFG-SESSION-COOKIE-NO-HTTPONLY", r'server\.servlet\.session\.cookie\.http-only\s*=\s*false', "high", "Session cookie not httpOnly", "Set true", "CWE-1004", 0.85),
+    # YAML-specific rules (v2.4 claim — restored)
+    ("CFG-YAML-JWT-SECRET", r'(?:jwt|jwt-secret|secretKey)\s*:\s*(?!.*\$\{)["\'][^"\']+["\']', "critical", "Hardcoded JWT secret in YAML", "Use ${JWT_SECRET}", "CWE-321", 0.85),
+    ("CFG-YAML-DB-PASSWORD", r'(?:password|db-password)\s*:\s*(?!.*\$\{)["\'][^"\']+["\']', "critical", "Hardcoded DB password in YAML", "Use ${DB_PASSWORD}", "CWE-798", 0.9),
+    ("CFG-YAML-CORS-WILDCARD", r'allowed-origins\s*:\s*\*', "high", "CORS wildcard in YAML", "Restrict origins", "CWE-942", 0.85),
+    ("CFG-YAML-DEBUG", r'debug\s*:\s*true', "medium", "Debug mode in YAML", "Set false", "CWE-489", 0.6),
 ]
 
 def scan_config_file(file_path, repo_root=None):

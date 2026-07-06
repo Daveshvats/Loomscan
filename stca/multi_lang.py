@@ -356,6 +356,16 @@ def scan_idor_multi(file_path, repo_root=None):
 def scan_state_machine_multi(file_path, repo_root=None):
     return run_patterns_per_language(file_path, repo_root, STATE_MACHINE_PATTERNS)
 
+# Merge extra rules for comprehensive coverage
+try:
+    from .extra_rules import merge_patterns, EXTRA_CRYPTO, EXTRA_AUTH, EXTRA_MODERN, EXTRA_IDOR
+    CRYPTO_PATTERNS = merge_patterns(CRYPTO_PATTERNS, EXTRA_CRYPTO)
+    AUTH_PATTERNS = merge_patterns(AUTH_PATTERNS, EXTRA_AUTH)
+    MODERN_ATTACK_PATTERNS = merge_patterns(MODERN_ATTACK_PATTERNS, EXTRA_MODERN)
+    IDOR_PATTERNS = merge_patterns(IDOR_PATTERNS, EXTRA_IDOR)
+except Exception:
+    pass
+
 def scan_repo_multi(repo_root, scanner, max_files=600):
     findings = []
     skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules", ".stca-cache", "build", "dist"}
