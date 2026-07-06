@@ -7,6 +7,10 @@ Languages supported: Python, JavaScript/TypeScript, Go, Java, C/C++
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.multi_lang")
+
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -363,8 +367,8 @@ try:
     AUTH_PATTERNS = merge_patterns(AUTH_PATTERNS, EXTRA_AUTH)
     MODERN_ATTACK_PATTERNS = merge_patterns(MODERN_ATTACK_PATTERNS, EXTRA_MODERN)
     IDOR_PATTERNS = merge_patterns(IDOR_PATTERNS, EXTRA_IDOR)
-except Exception:
-    pass
+except Exception as e:
+    logger.debug("extra_rules module unavailable: %s", e)
 
 def scan_repo_multi(repo_root, scanner, max_files=600):
     findings = []

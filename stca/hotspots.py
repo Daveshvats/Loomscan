@@ -32,6 +32,10 @@ The flow:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.hotspots")
+
 import hashlib
 import json
 import os
@@ -153,8 +157,8 @@ class HotspotManager:
             for h_dict in data.get("hotspots", []):
                 h = Hotspot(**h_dict)
                 self.hotspots[h.id] = h
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load hotspots file %s: %s", self.hotspots_file, e)
 
     def _save(self) -> None:
         data = {

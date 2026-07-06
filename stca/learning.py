@@ -10,6 +10,10 @@ training corpora.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.learning")
+
 import hashlib
 import json
 import math
@@ -77,8 +81,8 @@ class CodeEmbeddings:
     def save(self, path: Path) -> None:
         try:
             path.write_text(json.dumps(self.vectors), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to save learning vectors to %s: %s", path, e)
 
     def load(self, path: Path) -> None:
         try:

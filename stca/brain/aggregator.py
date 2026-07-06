@@ -6,6 +6,10 @@ pair. The diff as a whole gets a single final_decision = max over findings.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.brain.aggregator")
+
 from typing import List, Tuple, Dict
 from pathlib import Path
 import json
@@ -39,8 +43,8 @@ class Aggregator:
                     false_positives=s.get("fp", 0),
                     bugs_missed=s.get("fn", 0),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load layer reliability stats: %s", e)
 
     def get_reliability(self, layer_id: str) -> float:
         """Get the historical reliability score for a layer (0..1)."""

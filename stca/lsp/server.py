@@ -105,6 +105,27 @@ class LSPServer:
                 for hit in scan_js_patterns(tmp_path, self.repo_root):
                     findings.append({"rule_id": hit.rule_id, "file": hit.file, "line": hit.line,
                                      "message": hit.message, "severity": hit.severity, "fix": hit.fix})
+            # v2.9: Wire all v2 scanners for real-time LSP feedback
+            from ..multi_lang import scan_crypto_multi, scan_auth_multi, scan_idor_multi, scan_concurrency_multi
+            from ..code_quality import analyze_code_quality
+            for scanner in [scan_crypto_multi, scan_auth_multi, scan_idor_multi, scan_concurrency_multi]:
+                try:
+                    for lf in scanner(tmp_path, self.repo_root):
+                        findings.append({"rule_id": lf.rule_id, "file": str(path), "line": lf.line,
+                                         "message": lf.description, "severity": lf.severity, "fix": lf.fix})
+                except: pass
+            try:
+                for issue in analyze_code_quality(tmp_path, self.repo_root):
+                    findings.append({"rule_id": issue.rule_id, "file": str(path), "line": issue.line,
+                                     "message": issue.description, "severity": issue.severity, "fix": issue.fix})
+            except: pass
+            # Tree-sitter AST
+            try:
+                from ..tree_sitter_analyzer import analyze_with_ast
+                for issue in analyze_with_ast(tmp_path, self.repo_root):
+                    findings.append({"rule_id": issue.rule_id, "file": str(path), "line": issue.line,
+                                     "message": issue.description, "severity": issue.severity, "fix": issue.fix})
+            except: pass
         except: pass
         finally: tmp_path.unlink(missing_ok=True)
         return findings

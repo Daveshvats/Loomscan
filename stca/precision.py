@@ -20,6 +20,10 @@ Together these three mechanisms can reduce false positives by 50-80%.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.precision")
+
 import json
 import math
 import re
@@ -131,8 +135,8 @@ class FPLearner:
             for p_dict in data.get("patterns", []):
                 key = f"{p_dict['rule_id']}|{p_dict['file_pattern']}"
                 self.patterns[key] = FPPattern(**p_dict)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load FP patterns from %s: %s", self.fp_file, e)
 
     def _save(self) -> None:
         data = {
@@ -294,8 +298,8 @@ class ConfidenceCalibrator:
                         b.total = b_dict.get("total", 0)
                         b.correct = b_dict.get("correct", 0)
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load calibrator bins from %s: %s", self.cal_file, e)
 
     def _save(self) -> None:
         data = {

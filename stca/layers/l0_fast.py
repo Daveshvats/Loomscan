@@ -10,6 +10,10 @@ and to gracefully skip tools that aren't installed.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.layers.l0_fast")
+
 import re
 import subprocess
 import json
@@ -233,8 +237,8 @@ class L0Fast(LayerBase):
                 try:
                     data = json.loads(external_manifest.read_text())
                     configs.extend(p["url"] for p in data.values())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to load external packs manifest %s: %s", external_manifest, e)
 
             # Semgrep can only take one --config at a time, so we combine:
             # For multiple configs, semgrep accepts repeated --config flags

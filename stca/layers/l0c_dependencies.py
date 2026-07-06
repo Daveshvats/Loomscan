@@ -11,6 +11,10 @@ that become vulnerable tomorrow because nobody maintains them.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.layers.l0c_dependencies")
+
 import json
 import subprocess
 import re
@@ -104,8 +108,8 @@ class L0cDependencies(LayerBase):
                                 cwe="CWE-1104",
                                 fix_suggestion=f"Replace '{dep}' with {DEPRECATED_PACKAGES[dep]}",
                             ))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("deprecated package check failed: %s", e)
         return findings
 
     def _check_outdated_python(self, repo_root: Path) -> List[Finding]:
@@ -133,8 +137,8 @@ class L0cDependencies(LayerBase):
                     fix_suggestion=f"pip install --upgrade {pkg['name']}",
                     raw=pkg,
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("outdated python package check failed: %s", e)
         return findings
 
     def _check_outdated_node(self, repo_root: Path) -> List[Finding]:
@@ -162,8 +166,8 @@ class L0cDependencies(LayerBase):
                     fix_suggestion=f"npm install {name}@latest",
                     raw=info,
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("outdated node package check failed: %s", e)
         return findings
 
     def _check_licenses(self, repo_root: Path) -> List[Finding]:
@@ -194,6 +198,6 @@ class L0cDependencies(LayerBase):
                             raw=pkg,
                         ))
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("license check failed: %s", e)
         return findings

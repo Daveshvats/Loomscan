@@ -21,6 +21,10 @@ The baseline is per-file-path + per-rule, so:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.baseline")
+
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -61,8 +65,8 @@ class Baseline:
             for e_dict in data.get("entries", []):
                 entry = BaselineEntry(**e_dict)
                 self.entries[entry.fingerprint] = entry
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load baseline file %s: %s", self.baseline_file, e)
 
     def _save(self) -> None:
         data = {

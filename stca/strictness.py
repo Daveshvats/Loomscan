@@ -103,7 +103,7 @@ LEVELS: Dict[int, StrictnessLevel] = {
         enabled_layers={"L0_fast", "L0b_supply", "L0c_deps", "L0d_behavioral",
                         "L0e_iac", "L0f_commit", "L5_policy", "L3_invariants",
                         "L1_property"},
-        enabled_severities={"critical", "high", "medium", "low"},
+        enabled_severities={"critical", "high", "medium", "low", "info"},
         block_on={"block"},
     ),
     6: StrictnessLevel(

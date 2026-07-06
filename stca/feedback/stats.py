@@ -6,6 +6,10 @@ real bugs get upweighted.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.feedback.stats")
+
 import json
 from pathlib import Path
 from typing import Dict
@@ -32,8 +36,8 @@ class StatsTracker:
                     false_positives=s.get("fp", 0),
                     bugs_missed=s.get("fn", 0),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load feedback stats: %s", e)
 
     def save(self) -> None:
         data = {

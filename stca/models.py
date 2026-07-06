@@ -168,6 +168,20 @@ class PipelineResult:
     precision_stats: Dict[str, Any] = field(default_factory=dict)
     baselined_count: int = 0
     issue_store_stats: Dict[str, Any] = field(default_factory=dict)
+    # v3.1: scanner health tracking — surfaces previously-silent failures
+    # so they appear in the final report (TUI, JSON, SARIF) instead of
+    # only in logs that scroll by.
+    scanner_health: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def scanner_error_count(self) -> int:
+        """Number of scanners that failed during this run."""
+        return sum(1 for e in self.scanner_health if e.get("level") == "warning")
+
+    @property
+    def has_scanner_errors(self) -> bool:
+        """True if any scanner failed during this run."""
+        return self.scanner_error_count > 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -187,6 +201,8 @@ class PipelineResult:
             "precision_stats": self.precision_stats,
             "baselined_count": self.baselined_count,
             "issue_store_stats": self.issue_store_stats,
+            "scanner_health": self.scanner_health,
+            "scanner_error_count": self.scanner_error_count,
         }
 
     def to_json(self, path: Path) -> None:

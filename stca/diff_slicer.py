@@ -6,6 +6,10 @@ layers review 20 lines instead of 800.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.diff_slicer")
+
 import subprocess
 import re
 from pathlib import Path
@@ -132,32 +136,32 @@ def _build_parsers() -> dict:
     parsers = {}
     try:
         parsers["python"] = Parser(Language(tspython.language()))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("tree-sitter python parser unavailable: %s", e)
     try:
         parsers["javascript"] = Parser(Language(tsjs.language()))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("tree-sitter javascript parser unavailable: %s", e)
     if _HAS_GO:
         try:
             parsers["go"] = Parser(Language(tsgo.language()))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("tree-sitter go parser unavailable: %s", e)
     if _HAS_JAVA:
         try:
             parsers["java"] = Parser(Language(tsjava.language()))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("tree-sitter java parser unavailable: %s", e)
     if _HAS_C:
         try:
             parsers["c"] = Parser(Language(tsc.language()))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("tree-sitter c parser unavailable: %s", e)
     if _HAS_CPP:
         try:
             parsers["cpp"] = Parser(Language(tscpp.language()))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("tree-sitter cpp parser unavailable: %s", e)
     return parsers
 
 

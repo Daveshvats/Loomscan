@@ -12,6 +12,10 @@ Two convenience functions cover the 80% use case:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.brain.project_tuner")
+
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -131,8 +135,8 @@ class FeedbackStore:
                 "entries": [asdict(e) for e in self.entries],
             }
             self.store_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to save project tuner feedback: %s", e)
 
     def add(self, entry: FeedbackEntry) -> None:
         if not entry.labeled_at:

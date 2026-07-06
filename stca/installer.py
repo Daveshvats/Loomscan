@@ -14,6 +14,10 @@ The installer is idempotent — re-running skips already-installed tools.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.installer")
+
 import hashlib
 import json
 import os
@@ -355,8 +359,8 @@ def record_install(name: str, version: str) -> None:
     if VERSIONS_FILE.exists():
         try:
             data = json.loads(VERSIONS_FILE.read_text())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to read versions file %s: %s", VERSIONS_FILE, e)
     data[name] = {"version": version, "kind": TOOLS[name].kind}
     VERSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
     VERSIONS_FILE.write_text(json.dumps(data, indent=2))

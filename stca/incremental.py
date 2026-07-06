@@ -6,6 +6,10 @@ instead of O(all files).
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.incremental")
+
 import ast
 import hashlib
 import json
@@ -56,8 +60,8 @@ class FileLevelCache:
     def _save(self) -> None:
         try:
             self.index_file.write_text(json.dumps(self.index, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to save incremental cache %s: %s", self.index_file, e)
 
     @staticmethod
     def _hash_file(path: Path) -> str:

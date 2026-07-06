@@ -20,6 +20,10 @@ This is the "last mile" — detection is useless if devs don't apply the fix.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.layers.l8_autofix")
+
 import re
 import os
 import subprocess
@@ -246,8 +250,8 @@ class L8AutoFix(LayerBase):
             )
             if proc.returncode == 0:
                 return path.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("gofmt autofix failed on %s: %s", path, e)
         return None
 
     def _ruff_fix(self, finding: Finding, repo_root: Path) -> Optional[str]:
@@ -261,13 +265,13 @@ class L8AutoFix(LayerBase):
             )
             if proc.returncode == 0:
                 return path.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("ruff autofix failed on %s: %s", path, e)
         return None
 
     def _apply_patch(self, file_path: Path, new_content: str) -> None:
         """Apply a patch (full file replacement) to disk."""
         try:
             file_path.write_text(new_content, encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to apply autofix patch to %s: %s", file_path, e)

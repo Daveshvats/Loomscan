@@ -1,6 +1,10 @@
 """STCA CLI — `stca init|check|bootstrap|report|feedback`."""
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.cli")
+
 import sys
 import json
 from pathlib import Path
@@ -215,8 +219,8 @@ def _generate_sbom(repo_root: Path, fmt: str) -> str:
                         "version": ver_clean,
                         "purl": f"pkg:npm/{name}@{ver_clean}",
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to parse package.json for SBOM: %s", e)
 
     # Go
     go_mod = repo_root / "go.mod"
@@ -232,8 +236,8 @@ def _generate_sbom(repo_root: Path, fmt: str) -> str:
                             "version": parts[1].lstrip("v"),
                             "purl": f"pkg:golang/{parts[0]}@{parts[1]}",
                         })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to parse go.mod for SBOM: %s", e)
 
     # Rust
     cargo_lock = repo_root / "Cargo.lock"
@@ -266,8 +270,8 @@ def _generate_sbom(repo_root: Path, fmt: str) -> str:
                     "version": current_ver,
                     "purl": f"pkg:cargo/{current_pkg}@{current_ver}",
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to parse Cargo.lock for SBOM: %s", e)
 
     if fmt == "cyclonedx":
         return json.dumps({
@@ -303,9 +307,30 @@ def _generate_sbom(repo_root: Path, fmt: str) -> str:
 @click.option("--strictness", type=int, help="Strictness level 1-9 (PHPStan-inspired)")
 @click.option("--baseline", is_flag=True, help="Only flag NEW issues (detekt-inspired)")
 @click.option("--full", is_flag=True, help="Full-repo scan (not just diff) — scans ALL source files")
+@click.option("--strict-scanners", is_flag=True,
+              help="Exit with code 3 if any scanner failed during the run "
+                   "(surfaces previously-silent failures as a CI gate)")
+@click.option("-v", "--verbose", is_flag=True,
+              help="Enable DEBUG-level logging (shows optional-parser failures, "
+                   "per-file scan errors, and other low-level diagnostics)")
 def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
-          strictness: int, baseline: bool, full: bool):
+          strictness: int, baseline: bool, full: bool, strict_scanners: bool,
+          verbose: bool):
     """Run the pipeline on a git diff (or full repo with --full)."""
+    if verbose:
+        # Enable DEBUG-level logging for the stca namespace.
+        # Also add a handler to stderr if none exists (so DEBUG messages
+        # actually appear, not just get filtered out).
+        stca_logger = logging.getLogger("stca")
+        stca_logger.setLevel(logging.DEBUG)
+        if not stca_logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(logging.Formatter(
+                "%(levelname)s %(name)s: %(message)s"
+            ))
+            stca_logger.addHandler(handler)
+        stca_logger.propagate = False  # avoid duplicate output via root
+
     repo_root = Path(repo).resolve()
     if not (repo_root / ".git").exists():
         click.echo(f"Not a git repo: {repo_root}", err=True)
@@ -326,14 +351,28 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
     else:
         render_tui(result)
 
-    # exit code: 0 = pass, 1 = warn, 2 = block
+    # exit code: 0 = pass, 1 = block, 3 = scanner errors (when --strict-scanners)
     from .models import Decision
-    sys.exit({
+    exit_code = {
         Decision.PASS: 0,
         Decision.WARN: 0,  # don't block commits on warnings
         Decision.UNCERTAIN: 0,
         Decision.BLOCK: 1,
-    }.get(result.final_decision, 0))
+    }.get(result.final_decision, 0)
+
+    # v3.1: --strict-scanners gate — surfaces previously-silent failures
+    # as a CI-blocking exit code so they can't be ignored.
+    if strict_scanners and result.has_scanner_errors:
+        click.echo(
+            f"\nERROR: --strict-scanners gate failed: "
+            f"{result.scanner_error_count} scanner(s) failed during this run. "
+            f"Results may be incomplete. Re-run without --strict-scanners to "
+            f"allow partial results, or fix the scanner errors.",
+            err=True,
+        )
+        exit_code = 3
+
+    sys.exit(exit_code)
 
 
 @main.command()

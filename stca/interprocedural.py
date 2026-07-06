@@ -30,6 +30,10 @@ Architecture:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.interprocedural")
+
 import hashlib
 import json
 import re
@@ -223,8 +227,8 @@ def discover_sources_in_repo(repo_root: Path, max_files: int = 600) -> List[Sour
         if p.suffix.lower() in ALL_SOURCE_EXTS:
             try:
                 all_sources += discover_sources_in_file(p, repo_root)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("source discovery failed on %s: %s", p.name, e)
             count += 1
             if count >= max_files:
                 break
@@ -1042,8 +1046,8 @@ class InterproceduralTaintAnalyzer:
 
             try:
                 flows += self._analyze_file(p, repo_root)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("interprocedural analysis failed on %s: %s", p.name, e)
 
             count += 1
             if count >= max_files:

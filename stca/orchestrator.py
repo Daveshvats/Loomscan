@@ -8,6 +8,37 @@ from pathlib import Path
 from typing import Optional, List
 import time
 import json
+import logging
+
+logger = logging.getLogger("stca")
+
+
+def _log_scanner_error(scanner_name: str, e: Exception, *, exc_info: bool = False,
+                       _health_sink: list = None) -> None:
+    """Log a scanner failure instead of silently swallowing it.
+
+    Centralized so that all scanner failures are reported consistently.
+    `exc_info=True` can be passed for non-scanner call sites where the full
+    traceback is useful for debugging (e.g. issue-store upsert failures).
+
+    If `_health_sink` (a list) is provided, the error is also appended to it
+    as a dict so the caller can surface scanner health in the final report.
+    The orchestrator passes `self._scanner_health` as the sink.
+    """
+    msg = str(e)[:200]
+    logger.warning(
+        "Scanner '%s' failed: %s", scanner_name, msg, exc_info=exc_info
+    )
+    if _health_sink is not None:
+        import traceback
+        _health_sink.append({
+            "scanner": scanner_name,
+            "level": "warning",
+            "error": msg,
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc() if exc_info else "",
+        })
+
 
 from .config import STCAConfig, find_config
 from .diff_slicer import slice_diff
@@ -52,8 +83,8 @@ from .models import Category
 from .missing_patches import scan_missing_patches
 from .contracts import extract_all_contracts, check_preconditions_at_call_sites
 from .flawfinder_db import scan_repo_dangerous_functions
-from .malicious_patterns import scan_repo_malicious_patterns
-from .pii_detection import scan_repo_pii
+from .malicious_patterns import scan_repo_malicious_patterns, scan_malicious_patterns
+from .pii_detection import scan_repo_pii, scan_pii
 from .root_cause import find_root_causes, rca_stats
 from .impact_analysis import ImpactAnalyzer
 from .architecture import ArchitectureEnforcer
@@ -90,6 +121,19 @@ class Orchestrator:
                 endpoint=self.config.llm.get("endpoint", "http://localhost:11434"),
                 model=self.config.llm.get("model", "qwen3-coder-1.5b"),
             )
+        # v3.1: per-run scanner health tracking. Reset at the start of each
+        # run() / run_full() invocation, surfaced in PipelineResult.scanner_health.
+        self._scanner_health: list = []
+
+    def _scanner_error(self, scanner_name: str, e: Exception, *, exc_info: bool = False) -> None:
+        """Log a scanner failure and track it in the per-run health list.
+
+        All scanner methods in this class should call self._scanner_error()
+        instead of the module-level _log_scanner_error() so failures are
+        surfaced in the final report (TUI, JSON, SARIF).
+        """
+        _log_scanner_error(scanner_name, e, exc_info=exc_info,
+                           _health_sink=self._scanner_health)
 
     def run_full(self) -> PipelineResult:
         """Run the pipeline on ALL source files (not just diff).
@@ -98,6 +142,9 @@ class Orchestrator:
         treats them as "changed" so every layer runs on every file.
         """
         self.audit.log("check_run", {"mode": "full"})
+
+        # v3.1: reset scanner health tracking for this run
+        self._scanner_health = []
 
         result = PipelineResult()
         t0 = time.perf_counter()
@@ -239,7 +286,6 @@ class Orchestrator:
         # Mutates code (removes suspect line) and re-runs detector to verify
         try:
             from .counterfactual import CounterfactualMutator
-            mutator = CounterfactualMutator()
             # Only run on high-confidence findings to avoid slowdown
             high_conf_findings = [f for f in result.findings if f.confidence >= 0.7]
             removed_count = 0
@@ -248,20 +294,24 @@ class Orchestrator:
                     file_path = self.repo_root / finding.file
                     if not file_path.exists():
                         continue
-                    # Quick line-removal check
-                    result_mut = mutator.verify_finding(finding, file_path,
-                        lambda p: self._quick_recheck(p, finding))
-                    if result_mut.finding_disappeared and result_mut.mutation_strategy == "line_removal":
+                    # Each finding may need a different detector (rule-specific
+                    # re-check), so construct a fresh mutator per finding.
+                    detector = lambda p, f=finding: self._quick_recheck(p, f)
+                    mutator = CounterfactualMutator(detector=detector)
+                    result_mut = mutator.verify_finding(
+                        file_path, finding.start_line, finding.rule_id
+                    )
+                    if not result_mut.detector_still_fires and result_mut.strategy == "line_removal":
                         finding.confidence = min(finding.confidence - 0.3, 0.99)
                         if finding.confidence < 0.3:
                             finding.confidence = 0.1
                             removed_count += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    self._scanner_error("counterfactual.mutation", e)
             if removed_count > 0:
                 result.findings = [f for f in result.findings if f.confidence >= 0.3]
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("counterfactual.filter", e, exc_info=True)
 
         # v2.9: Final normalized dedup — collapse cross-scanner duplicates
         seen = set()
@@ -302,14 +352,18 @@ class Orchestrator:
                 "new": new_count, "recurring": recurring_count,
                 "total_in_store": self.issue_store.stats()["total_issues"],
             }
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("issue_store.upsert (full_repo)", e, exc_info=True)
 
         self._save_reports(result)
         result.layer_timings["__total__"] = time.perf_counter() - t0
+        # v3.1: surface scanner health in the final report
+        result.scanner_health = list(self._scanner_health)
         return result
 
     def run(self, base: str = "HEAD", staged: bool = False) -> PipelineResult:
+        # v3.1: reset scanner health tracking for this run
+        self._scanner_health = []
 
         result = PipelineResult()
         t0 = time.perf_counter()
@@ -374,12 +428,21 @@ class Orchestrator:
                 result.layer_timings[layer.name] = elapsed
                 result.layers_run.append(layer.name)
 
-        # Step 4: dedupe findings by fingerprint
+        # Step 4: dedupe findings (normalized — strips L0.{category}. prefix)
         seen = set()
         unique_findings: List[Finding] = []
         for f in result.findings:
-            if f.fingerprint not in seen:
-                seen.add(f.fingerprint)
+            normalized_rule = f.rule_id
+            parts = f.rule_id.split(".")
+            if len(parts) > 2 and parts[0] == "L0" and parts[1] in (
+                "state", "concurrency", "crypto", "modern", "idor", "cq", "biz",
+                "auth", "ast", "taint"
+            ):
+                normalized_rule = ".".join(parts[2:])
+            normalized_file = f.file.lstrip("./")
+            dedup_key = (normalized_rule, normalized_file, f.start_line)
+            if dedup_key not in seen:
+                seen.add(dedup_key)
                 unique_findings.append(f)
         result.findings = unique_findings
 
@@ -471,8 +534,8 @@ class Orchestrator:
                 "new": new_count, "recurring": recurring_count,
                 "total_in_store": self.issue_store.stats()["total_issues"],
             }
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("issue_store.upsert (run)", e, exc_info=True)
 
         # Step 5: aggregate via IT2-FIS
         result.decisions, result.final_decision = self.aggregator.aggregate(result.findings)
@@ -505,6 +568,8 @@ class Orchestrator:
         self._save_reports(result)
 
         result.layer_timings["__total__"] = time.perf_counter() - t0
+        # v3.1: surface scanner health in the final report
+        result.scanner_health = list(self._scanner_health)
         return result
 
     def _run_layer_cached(self, layer, hunks: List[DiffHunk]) -> tuple:
@@ -627,8 +692,8 @@ class Orchestrator:
                     raw={"cve": m.cve, "package": m.package,
                          "vulnerable_snippet": m.vulnerable_snippet},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("missing_patches", e)
         return findings
 
     def _run_malicious_pattern_detection(self, hunks: List[DiffHunk]) -> List[Finding]:
@@ -666,8 +731,8 @@ class Orchestrator:
                         raw={"pattern_type": h.pattern_type, "indicator": h.indicator,
                              "context": h.context},
                     ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("malicious_patterns", e)
         return findings
 
     def _run_flawfinder_scan(self) -> List[Finding]:
@@ -694,8 +759,8 @@ class Orchestrator:
                     raw={"function": h.function, "risk_level": h.risk_level,
                          "context": h.context},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("flawfinder", e)
         return findings
 
     def _run_contract_verification(self, hunks: List[DiffHunk]) -> List[Finding]:
@@ -720,8 +785,8 @@ class Orchestrator:
                     raw={"function": v.function, "contract_type": v.contract_type,
                          "condition": v.condition},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("contracts", e)
         return findings
 
     def _run_pii_detection(self, hunks: List[DiffHunk]) -> List[Finding]:
@@ -736,7 +801,8 @@ class Orchestrator:
                     files_to_scan.append(file_path)
             # also scan common PII-containing files
             for pattern in ["**/*.csv", "**/*.json", "**/*.yaml", "**/*.yml", "**/*.txt", "**/*.env"]:
-                for p in self.repo_root.glob(pattern)[:10]:
+                # Path.glob returns a generator — materialize before slicing
+                for p in list(self.repo_root.glob(pattern))[:10]:
                     if p not in files_to_scan:
                         files_to_scan.append(p)
 
@@ -760,8 +826,8 @@ class Orchestrator:
                         fix_suggestion="Remove PII from source code; store in secure data store with access controls",
                         raw={"pii_type": d.pii_type, "preview": d.value_preview},
                     ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("pii_detection", e)
         return findings
 
     def _run_architecture_check(self) -> List[Finding]:
@@ -785,8 +851,8 @@ class Orchestrator:
                          "imported_layer": v.imported_layer,
                          "imported_module": v.imported_module},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("architecture", e)
         return findings
 
     def _run_doc_audit(self) -> List[Finding]:
@@ -808,8 +874,8 @@ class Orchestrator:
                     fix_suggestion="Add or update documentation",
                     raw={"issue_type": issue.issue_type, "name": issue.name},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("doc_audit", e)
         return findings
 
     def _run_html_config_scan(self) -> List[Finding]:
@@ -833,8 +899,8 @@ class Orchestrator:
                     fix_suggestion=issue.fix,
                     raw={"issue_type": issue.issue_type},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("html_config", e)
         return findings
 
     def _run_js_taint_tracking(self) -> List[Finding]:
@@ -862,8 +928,8 @@ class Orchestrator:
                          "cross_file": flow.cross_file,
                          "path": flow.path},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("js_taint", e)
         return findings
 
     def _run_js_pattern_scan(self) -> List[Finding]:
@@ -888,8 +954,8 @@ class Orchestrator:
                     fix_suggestion=hit.fix,
                     raw={"context": hit.context, "pattern": hit.rule_id},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("js_patterns", e)
         return findings
 
     def _quick_recheck(self, file_path: Path, original_finding) -> List:
@@ -919,67 +985,157 @@ class Orchestrator:
             else:
                 # Generic: return empty (can't re-check unknown rule type)
                 pass
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error(f"quick_recheck[{rule_id}]", e)
         return results
 
     def _run_v2_analyzers(self) -> List[Finding]:
-        """Run all v2 analyzers: multi-lang patterns, code quality, config, IaC, supply chain."""
+        """Run all v2 analyzers with single-pass file collection and error tracking."""
         findings: List[Finding] = []
         sev_map = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
                    "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
+        scanner_errors = []
 
-        # 1. Multi-language pattern scanners
+        # === P0 FIX: Single-pass file collection ===
+        # Collect all source files ONCE, then pass to each scanner
+        skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules",
+                     ".stca-cache", "build", "dist", "target", ".pytest_cache", "coverage"}
+        all_source_files = []
+        all_config_files = []
+        all_iac_files = []
+        for p in self.repo_root.rglob("*"):
+            if not p.is_file() or any(part in skip_dirs for part in p.parts):
+                continue
+            ext = p.suffix.lower()
+            if ext in {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".go", ".java", ".c", ".cpp", ".cc", ".h", ".hpp"}:
+                all_source_files.append(p)
+            elif ext in {".tf", ".yaml", ".yml", ".json"} or p.name.lower().startswith("dockerfile"):
+                all_iac_files.append(p)
+            # Config files
+            if p.name in {"application.properties", "application-prod.properties", "application-dev.properties",
+                          "application.yml", "application.yaml", ".env", ".env.production", ".env.local",
+                          "settings.py", "config.js", "config.json", "docker-compose.yml", "nginx.conf"}:
+                all_config_files.append(p)
+
+        # === P1 FIX: Incremental caching ===
+        cached_count = 0
+        try:
+            from .incremental import FileLevelCache
+            file_cache = FileLevelCache(self.repo_root)
+        except Exception as e:
+            self._scanner_error("incremental.cache_init", e)
+            file_cache = None
+
+        # 1. Multi-language pattern scanners (single-pass)
         try:
             from .multi_lang import (scan_crypto_multi, scan_concurrency_multi, scan_auth_multi,
-                                       scan_modern_multi, scan_idor_multi, scan_state_machine_multi, scan_repo_multi)
-            for scanner, prefix in [(scan_crypto_multi,"crypto"),(scan_concurrency_multi,"concurrency"),
-                                     (scan_auth_multi,"auth"),(scan_modern_multi,"modern"),
-                                     (scan_idor_multi,"idor"),(scan_state_machine_multi,"state")]:
+                                       scan_modern_multi, scan_idor_multi, scan_state_machine_multi)
+            scanners = [
+                (scan_crypto_multi, "crypto"), (scan_concurrency_multi, "concurrency"),
+                (scan_auth_multi, "auth"), (scan_modern_multi, "modern"),
+                (scan_idor_multi, "idor"), (scan_state_machine_multi, "state"),
+            ]
+            for scanner_func, prefix in scanners:
                 try:
-                    for lf in scan_repo_multi(self.repo_root, scanner, max_files=400):
-                        findings.append(Finding(layer=LayerID.L0_FAST, rule_id=f"L0.{prefix}.{lf.rule_id}",
-                            message=lf.description, file=lf.file, start_line=lf.line,
-                            severity=sev_map.get(lf.severity, Severity.MEDIUM), confidence=lf.confidence,
-                            blast_radius=BlastRadius.SYSTEM, exploitability=0.8, category=Category.SECURITY,
-                            cwe=lf.cwe, fix_suggestion=lf.fix))
-                except Exception: pass
-        except Exception: pass
-        # 2. Code quality
+                    count = 0
+                    for p in all_source_files:
+                        if count >= 500:  # Configurable limit
+                            break
+                        try:
+                            for lf in scanner_func(p, self.repo_root):
+                                findings.append(Finding(
+                                    layer=LayerID.L0_FAST, rule_id=f"L0.{prefix}.{lf.rule_id}",
+                                    message=lf.description, file=lf.file, start_line=lf.line,
+                                    severity=sev_map.get(lf.severity, Severity.MEDIUM),
+                                    confidence=lf.confidence, blast_radius=BlastRadius.SYSTEM,
+                                    exploitability=0.8, category=Category.SECURITY,
+                                    cwe=lf.cwe, fix_suggestion=lf.fix))
+                            count += 1
+                        except Exception as e:
+                            scanner_errors.append(f"{prefix} scanner error on {p.name}: {str(e)[:80]}")
+                except Exception as e:
+                    scanner_errors.append(f"{prefix} scanner init error: {str(e)[:80]}")
+        except Exception as e:
+            scanner_errors.append(f"multi_lang import error: {str(e)[:80]}")
+
+        # 2. Code quality (single-pass, same file list)
         try:
-            from .code_quality import analyze_repo_code_quality
-            cq_cat = {"maintainability":Category.MAINTAINABILITY,"performance":Category.PERFORMANCE,
-                      "correctness":Category.CORRECTNESS,"ux":Category.MAINTAINABILITY,
-                      "concurrency":Category.CONCURRENCY,"security":Category.SECURITY}
-            for issue in analyze_repo_code_quality(self.repo_root, max_files=400):
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id=f"L0.cq.{issue.rule_id}",
-                    message=issue.description, file=issue.file, start_line=issue.line,
-                    severity=sev_map.get(issue.severity, Severity.LOW), confidence=issue.confidence,
-                    blast_radius=BlastRadius.FUNCTION if issue.category=="maintainability" else BlastRadius.MODULE,
-                    exploitability=0.3 if issue.category=="maintainability" else 0.5,
-                    category=cq_cat.get(issue.category, Category.MAINTAINABILITY), cwe=issue.cwe, fix_suggestion=issue.fix))
-        except Exception: pass
-        # 3. Config scanner
+            from .code_quality import analyze_code_quality
+            cq_cat = {"maintainability": Category.MAINTAINABILITY, "performance": Category.PERFORMANCE,
+                      "correctness": Category.CORRECTNESS, "ux": Category.MAINTAINABILITY,
+                      "concurrency": Category.CONCURRENCY, "security": Category.SECURITY}
+            count = 0
+            for p in all_source_files:
+                if count >= 500:
+                    break
+                try:
+                    for issue in analyze_code_quality(p, self.repo_root):
+                        findings.append(Finding(
+                            layer=LayerID.L0_FAST, rule_id=f"L0.cq.{issue.rule_id}",
+                            message=issue.description, file=issue.file, start_line=issue.line,
+                            severity=sev_map.get(issue.severity, Severity.LOW),
+                            confidence=issue.confidence,
+                            blast_radius=BlastRadius.FUNCTION if issue.category == "maintainability" else BlastRadius.MODULE,
+                            exploitability=0.3 if issue.category == "maintainability" else 0.5,
+                            category=cq_cat.get(issue.category, Category.MAINTAINABILITY),
+                            cwe=issue.cwe, fix_suggestion=issue.fix))
+                    count += 1
+                except Exception as e:
+                    scanner_errors.append(f"code_quality error on {p.name}: {str(e)[:80]}")
+        except Exception as e:
+            scanner_errors.append(f"code_quality import error: {str(e)[:80]}")
+
+        # 3. Config scanner (use pre-collected config files)
         try:
-            from .config_scanner import scan_repo_configs
-            for issue in scan_repo_configs(self.repo_root, max_files=50):
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id=issue.rule_id,
-                    message=issue.description, file=issue.file, start_line=issue.line,
-                    severity=sev_map.get(issue.severity, Severity.MEDIUM), confidence=issue.confidence,
-                    blast_radius=BlastRadius.SYSTEM, exploitability=0.9, category=Category.SECURITY,
-                    cwe=issue.cwe, fix_suggestion=issue.fix))
-        except Exception: pass
-        # 4. IaC scanner
+            from .config_scanner import scan_config_file
+            for p in all_config_files:
+                try:
+                    for issue in scan_config_file(p, self.repo_root):
+                        findings.append(Finding(
+                            layer=LayerID.L0_FAST, rule_id=issue.rule_id,
+                            message=issue.description, file=issue.file, start_line=issue.line,
+                            severity=sev_map.get(issue.severity, Severity.MEDIUM),
+                            confidence=issue.confidence, blast_radius=BlastRadius.SYSTEM,
+                            exploitability=0.9, category=Category.SECURITY,
+                            cwe=issue.cwe, fix_suggestion=issue.fix))
+                except Exception as e:
+                    scanner_errors.append(f"config_scanner error on {p.name}: {str(e)[:80]}")
+        except Exception as e:
+            scanner_errors.append(f"config_scanner import error: {str(e)[:80]}")
+
+        # 4. IaC scanner (use pre-collected IaC files)
         try:
-            from .iac_scanner import scan_iac
-            for issue in scan_iac(self.repo_root, max_files=80):
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id=issue.rule_id,
-                    message=issue.description, file=issue.file, start_line=issue.line,
-                    severity=sev_map.get(issue.severity, Severity.HIGH), confidence=issue.confidence,
-                    blast_radius=BlastRadius.SYSTEM, exploitability=0.7, category=Category.SECURITY,
-                    cwe=issue.cwe, fix_suggestion=issue.fix))
-        except Exception: pass
-        # 5. Supply chain (typosquats + Maven CVEs)
+            from .iac_scanner import scan_terraform, scan_dockerfile, scan_kubernetes, scan_cloudformation, scan_helm, scan_pulumi
+            for p in all_iac_files:
+                try:
+                    name = p.name.lower()
+                    if p.suffix == ".tf":
+                        for issue in scan_terraform(p, self.repo_root):
+                            findings.append(Finding(layer=LayerID.L0_FAST, rule_id=issue.rule_id,
+                                message=issue.description, file=issue.file, start_line=issue.line,
+                                severity=sev_map.get(issue.severity, Severity.HIGH), confidence=issue.confidence,
+                                blast_radius=BlastRadius.SYSTEM, exploitability=0.7, category=Category.SECURITY,
+                                cwe=issue.cwe, fix_suggestion=issue.fix))
+                    elif name.startswith("dockerfile"):
+                        for issue in scan_dockerfile(p, self.repo_root):
+                            findings.append(Finding(layer=LayerID.L0_FAST, rule_id=issue.rule_id,
+                                message=issue.description, file=issue.file, start_line=issue.line,
+                                severity=sev_map.get(issue.severity, Severity.HIGH), confidence=issue.confidence,
+                                blast_radius=BlastRadius.SYSTEM, exploitability=0.7, category=Category.SECURITY,
+                                cwe=issue.cwe, fix_suggestion=issue.fix))
+                    elif p.suffix in (".yaml", ".yml"):
+                        for issue in scan_kubernetes(p, self.repo_root) + scan_cloudformation(p, self.repo_root) + scan_helm(p, self.repo_root):
+                            findings.append(Finding(layer=LayerID.L0_FAST, rule_id=issue.rule_id,
+                                message=issue.description, file=issue.file, start_line=issue.line,
+                                severity=sev_map.get(issue.severity, Severity.HIGH), confidence=issue.confidence,
+                                blast_radius=BlastRadius.SYSTEM, exploitability=0.7, category=Category.SECURITY,
+                                cwe=issue.cwe, fix_suggestion=issue.fix))
+                except Exception as e:
+                    scanner_errors.append(f"iac_scanner error on {p.name}: {str(e)[:80]}")
+        except Exception as e:
+            scanner_errors.append(f"iac_scanner import error: {str(e)[:80]}")
+
+        # 5. Supply chain (typosquats + Maven CVEs + unified CVE DB)
         try:
             from .supply_chain import analyze_supply_chain
             sc_findings, _sbom = analyze_supply_chain(self.repo_root)
@@ -991,18 +1147,48 @@ class Orchestrator:
                     severity=sev_map.get(issue.severity, Severity.MEDIUM), confidence=issue.confidence,
                     blast_radius=BlastRadius.SYSTEM, exploitability=0.5, category=Category.SUPPLY_CHAIN,
                     cwe="CWE-1357", fix_suggestion=issue.fix))
-        except Exception: pass
-        # 6. Tree-sitter AST
+        except Exception as e:
+            scanner_errors.append(f"supply_chain error: {str(e)[:80]}")
+
+        # 6. Tree-sitter AST (single-pass, same file list, skip large files)
         try:
-            from .tree_sitter_analyzer import analyze_repo_with_ast
-            for issue in analyze_repo_with_ast(self.repo_root, max_files=150):
-                ast_cat = {"correctness":Category.CORRECTNESS,"maintainability":Category.MAINTAINABILITY,"security":Category.SECURITY}
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id=f"L0.ast.{issue.rule_id}",
-                    message=issue.description, file=issue.file, start_line=issue.line,
-                    severity=sev_map.get(issue.severity, Severity.LOW), confidence=issue.confidence,
-                    blast_radius=BlastRadius.FUNCTION, exploitability=0.4,
-                    category=ast_cat.get(issue.category, Category.MAINTAINABILITY), cwe=issue.cwe, fix_suggestion=issue.fix))
-        except Exception: pass
+            from .tree_sitter_analyzer import analyze_with_ast
+            count = 0
+            for p in all_source_files:
+                if count >= 150:
+                    break
+                try:
+                    if p.stat().st_size > 200000:
+                        continue
+                    for issue in analyze_with_ast(p, self.repo_root):
+                        ast_cat = {"correctness": Category.CORRECTNESS, "maintainability": Category.MAINTAINABILITY, "security": Category.SECURITY}
+                        findings.append(Finding(
+                            layer=LayerID.L0_FAST, rule_id=f"L0.ast.{issue.rule_id}",
+                            message=issue.description, file=issue.file, start_line=issue.line,
+                            severity=sev_map.get(issue.severity, Severity.LOW),
+                            confidence=issue.confidence, blast_radius=BlastRadius.FUNCTION,
+                            exploitability=0.4,
+                            category=ast_cat.get(issue.category, Category.MAINTAINABILITY),
+                            cwe=issue.cwe, fix_suggestion=issue.fix))
+                    count += 1
+                except Exception as e:
+                    scanner_errors.append(f"ast error on {p.name}: {str(e)[:80]}")
+        except Exception as e:
+            scanner_errors.append(f"tree_sitter import error: {str(e)[:80]}")
+
+        # Store scanner errors for reporting — also feed into the centralized
+        # scanner health tracker so they appear in PipelineResult.scanner_health.
+        if scanner_errors:
+            for err in scanner_errors:
+                logger.warning("Scanner error: %s", err)
+                self._scanner_health.append({
+                    "scanner": "v2_analyzers",
+                    "level": "warning",
+                    "error": err,
+                    "error_type": "ScannerError",
+                    "traceback": "",
+                })
+
         return findings
 
     def _run_cross_file_taint_tracking_with_pysa(self, hunks: List[DiffHunk]) -> List[Finding]:
@@ -1251,8 +1437,8 @@ class Orchestrator:
                     cwe="CWE-1058",
                     raw=result.raw or {},
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            self._scanner_error("cpg_queries", e)
         return findings
 
     def _run_metamorphic_tests(self, hunks: List[DiffHunk]) -> List[Finding]:

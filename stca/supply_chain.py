@@ -223,6 +223,21 @@ def analyze_supply_chain(repo_root, project_license="MIT"):
                 for cf in scan_requirements_unified(req_file, cve_db):
                     findings.append(SupplyChainIssue("pypi_cve", cf["package"], cf["version"],
                         f"{cf['cve_id']}: {cf['description']}", cf["severity"], cf["fix"], 0.9, cf["cve_id"]))
+        # Go modules
+        go_mod = repo_root / "go.mod"
+        if go_mod.exists():
+            import re as _re
+            go_deps = []
+            for line in go_mod.read_text().splitlines():
+                m = _re.match(r'^\s*([^\s]+)\s+(v[\d.]+)', line)
+                if m:
+                    go_deps.append(("Go", m.group(1), m.group(2)))
+            if go_deps:
+                go_cves = cve_db.lookup_batch(go_deps)
+                for cve in go_cves:
+                    findings.append(SupplyChainIssue("go_cve", cve.package, cve.version,
+                        f"{cve.cve_id}: {cve.description}", cve.severity,
+                        f"Upgrade {cve.package} to {cve.fixed_version or 'latest'}", 0.9, cve.cve_id))
     except: pass
     sbom = _format_cyclonedx(deps, repo_root)
     return findings, sbom

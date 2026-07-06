@@ -6,6 +6,10 @@ into ~/.stca/rules/.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.rules.__init__")
+
 import urllib.request
 from pathlib import Path
 from typing import List, Dict
@@ -213,8 +217,8 @@ def pull_external_pack(name: str, dest_dir: Path) -> Path:
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to read external packs manifest %s: %s", manifest, e)
     data[name] = {"url": url, **EXTERNAL_PACKS[name]}
     manifest.write_text(json.dumps(data, indent=2))
     return manifest

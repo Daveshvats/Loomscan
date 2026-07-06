@@ -17,6 +17,10 @@ real-world breaches come from vulnerable *dependencies*.
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.layers.l0b_supply_chain")
+
 import json
 import re
 import subprocess
@@ -163,8 +167,8 @@ class L0bSupplyChain(LayerBase):
                     fix_suggestion=f"Run `npm audit fix` to update {vuln_id}",
                     raw=vuln,
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("npm audit failed: %s", e)
         return findings
 
     def _audit_go(self, repo_root: Path) -> List[Finding]:
@@ -199,8 +203,8 @@ class L0bSupplyChain(LayerBase):
                         ))
                 except json.JSONDecodeError:
                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("go vuln audit failed: %s", e)
         return findings
 
     def _audit_rust(self, repo_root: Path) -> List[Finding]:
@@ -233,8 +237,8 @@ class L0bSupplyChain(LayerBase):
                     fix_suggestion=f"Update {vuln.get('package', {}).get('name')} to patched version",
                     raw=vuln,
                 ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("rust cargo audit failed: %s", e)
         return findings
 
     def _audit_osv(self, repo_root: Path) -> List[Finding]:
@@ -265,8 +269,8 @@ class L0bSupplyChain(LayerBase):
                             fix_suggestion=f"Update {pkg.get('package', {}).get('name')} to a fixed version",
                             raw=vuln,
                         ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("OSV.dev audit failed: %s", e)
         return findings
 
     def _check_eol_versions(self, repo_root: Path) -> List[Finding]:
@@ -402,7 +406,7 @@ class L0bSupplyChain(LayerBase):
                                 cwe="CWE-1357",
                                 fix_suggestion=f"Replace '{dep}' with '{TYPOSQUATS[dep]}'",
                             ))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("typosquat check failed: %s", e)
 
         return findings

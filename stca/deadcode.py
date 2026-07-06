@@ -25,6 +25,10 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.deadcode")
+
 import ast
 import json
 import os
@@ -116,8 +120,8 @@ class DeadCodeAnalyzer:
                 if func_id in called_funcs:
                     self.functions[func_id].called = True
                     self.functions[func_id].call_count = data.get("counts", {}).get(func_id, 1)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load dead-code trace file %s: %s", self.trace_file, e)
 
     def get_dead_code(self) -> List[FunctionInfo]:
         """Return functions that were never called."""

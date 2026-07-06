@@ -12,6 +12,10 @@ In production, replace this with Antithesis integration or
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.layers.l7_simulation")
+
 import re
 import subprocess
 import sys
@@ -96,7 +100,7 @@ class L7Simulation(LayerBase):
                                 cwe="CWE-362",
                                 raw={"line": line},
                             ))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("simulation layer scanner failed: %s", e)
 
         return findings

@@ -29,6 +29,10 @@ Sinks (dangerous operations in JS/React):
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger("stca.js_cpg")
+
 import re
 import hashlib
 from collections import defaultdict, deque
@@ -366,8 +370,8 @@ class JavaScriptCPG:
                 for pattern in JS_SANITIZERS:
                     if re.search(pattern, line):
                         return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("sanitizer check failed: %s", e)
         return False
 
     def stats(self) -> dict:

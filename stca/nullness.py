@@ -15,6 +15,10 @@ Key improvements:
      count as guards.
   6. Only flag EXPLICIT None sources (default=None, Optional annotations, dict.get(),
      re.search(), .first(), .last(), etc.)
+  7. Bare function calls (e.g. `result = get_value()`) are treated as possibly-None
+     when no type information is available, matching NilAway's conservative default.
+     A small allowlist of guaranteed non-None builtins (len, str, list, ...) is
+     excluded to keep false positives down.
 """
 from __future__ import annotations
 
@@ -37,6 +41,19 @@ class NullnessIssue:
 NONE_RETURNING_METHODS = {
     "get", "find", "search", "match", "fullmatch",
     "first", "last", "one_or_none", "get_or_none",
+}
+
+# Builtins and common stdlib calls that are guaranteed to never return None.
+# Used to suppress false positives when a bare call result is dereferenced.
+# Note: getattr() is intentionally excluded — it returns the supplied default
+# which may be None. print() is also excluded because it returns None.
+NON_NONE_BUILTINS = {
+    "len", "abs", "min", "max", "sum", "round", "pow", "divmod",
+    "bool", "int", "float", "str", "bytes", "bytearray", "complex", "frozenset",
+    "list", "dict", "set", "tuple", "range", "enumerate", "zip", "reversed", "sorted",
+    "type", "id", "hash", "repr", "format", "chr", "ord", "hex", "oct", "bin", "ascii",
+    "isinstance", "issubclass", "callable", "hasattr", "vars", "dir", "globals",
+    "locals", "input", "open",
 }
 
 OPTIONAL_PATTERNS = {"Optional", "Union", "None"}
@@ -135,7 +152,19 @@ class NullnessAnalyzer:
                         elif isinstance(node.value, ast.Call):
                             call = node.value
                             if isinstance(call.func, ast.Attribute):
+                                # Attribute calls known to return None (dict.get, re.search, ...)
                                 if call.func.attr in NONE_RETURNING_METHODS:
+                                    possibly_none.add(target.id)
+                                # Other attribute calls (obj.foo()) are still
+                                # potentially None-returning — but we only flag
+                                # the well-known ones to avoid excessive FPs.
+                            elif isinstance(call.func, ast.Name):
+                                # Bare function call (e.g. result = get_value()).
+                                # Without type info we conservatively treat the
+                                # result as possibly-None, matching NilAway's
+                                # default assumption for untyped call sites.
+                                # Exclude obvious non-None builtins to keep FPs down.
+                                if call.func.id not in NON_NONE_BUILTINS:
                                     possibly_none.add(target.id)
         return possibly_none
 
@@ -250,7 +279,12 @@ class NullnessAnalyzer:
                             if val.func.attr not in NONE_RETURNING_METHODS:
                                 return True
                         elif isinstance(val.func, ast.Name):
-                            return True
+                            # Bare function call is non-None only if it's in
+                            # the safe-builtins allowlist (len, str, list, ...).
+                            # Otherwise it may still return None — keep the
+                            # variable flagged as possibly-None.
+                            if val.func.id in NON_NONE_BUILTINS:
+                                return True
                     if isinstance(val, (ast.List, ast.Dict, ast.Tuple, ast.Set)):
                         return True
                     if isinstance(val, ast.BinOp):
