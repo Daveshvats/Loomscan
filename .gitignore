@@ -6,7 +6,7 @@ __pycache__/
 *.egg
 dist/
 build/
-
+.mimocode/
 # Virtual environments
 .venv/
 venv/
