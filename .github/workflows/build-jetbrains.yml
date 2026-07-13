@@ -2,7 +2,7 @@ name: Build JetBrains Plugin
 
 on:
   push:
-    branches: [m[main, master]
+    branches: [main, master]
     paths:
       - 'editor/intellij-loomscan/**'
   pull_request:
