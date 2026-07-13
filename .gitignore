@@ -33,7 +33,6 @@ htmlcov/
 *.swp
 
 # Editor plugins — compiled artifacts
-editor/vscode-stca/out/
 editor/vscode-stca/node_modules/
 editor/intellij-stca/build/
 editor/intellij-stca/.gradle/
