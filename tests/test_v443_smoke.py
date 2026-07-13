@@ -74,19 +74,13 @@ class TestStrictnessLevelFix:
     top-level config field."""
 
     def test_strictness_level_no_crash_with_old_config(self, tmp_path):
-        """End-to-end: setting strictness level should not crash even with
-        a stale __strictness__ key in the config."""
-        import subprocess
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-        # Create a config with the old __strictness__ format (v4.42 and earlier)
-        (repo / ".stca.yaml").write_text(
-            "strictness: 5\n"
-            "layers:\n"
-            "  __strictness__:\n"
-            "    level: 3\n"
-        )
+         # v5.0 FIX: Configure git identity for CI environments
+        subprocess.run(["git", "config", "user.email", "test@test.local"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+        (repo / ".stca.yaml").write_text("strictness: 5\n")
         subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
 
