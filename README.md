@@ -538,20 +538,6 @@ python -m pytest tests/ -q
 
 ---
 
-## 📝 Version History
-
-- **v5.9** — Premium mascot (inline-image: Kitty/iTerm2/WezTerm/VS Code/Ghostty), doctor skfuzzy fix, `--version` flag
-- **v5.8** — 3-tier install model, `loomscan doctor`, Rust wheel CI, spider mascot redesign (8 frames)
-- **v5.7** — TUI mascot + progress bar, Rust core pyo3 bindings, incremental CPG caching
-- **v5.6** — Multi-language taint sources/sinks/sanitizers (JS/Java/Go), interprocedural KB 4× expansion
-- **v5.5** — Critical YAML wiring fix (all 2,095 rules now fire), Rust core source, cleanup
-- **v5.4** — Multi-lang CPG def-use chains, SARIF Pro tier (threadFlow), rename to LoomScan
-- **v5.3** — Multi-lang metamorphic testing, multi-lang LLM-verify, SARIF Pro tier
-- **v5.2** — Native YAML rule engine (no semgrep dependency), 1,995 rules now fire
-- **v5.1** — Framework taint rules (Flask/Django/Express/Spring/React), quickstart `--open-dashboard`
-- **v5.0** — `loomscan quickstart`, multi-language counterfactual (9 languages)
-
----
 
 ## 🤝 Contributing
 

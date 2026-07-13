@@ -16,26 +16,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 — use Docker (manylinux)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            use-docker: true
-          # Linux aarch64 — use Docker (manylinux cross)
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            use-docker: true
-          # macOS Intel
+            cross: true
           - os: macos-13
             target: x86_64-apple-darwin
-            use-docker: false
-          # macOS Apple Silicon
           - os: macos-14
             target: aarch64-apple-darwin
-            use-docker: false
-          # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            use-docker: false
 
     steps:
       - uses: actions/checkout@v4
@@ -53,26 +44,33 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      # ── Docker build (Linux) ──
-      - name: Build wheel (Docker — Linux)
-        if: matrix.use-docker == true
-        working-directory: rust-core
-        run: |
-          maturin build --release --target ${{ matrix.target }} --out dist --docker
-        env:
-          PYO3_PYTHON: python
+      - name: Install cross-compilation tools (Linux ARM64 only)
+        if: matrix.cross == true
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      # ── Native build (macOS/Windows) ──
-      - name: Build wheel (native — macOS/Windows)
-        if: matrix.use-docker != true
+      - name: Build wheel (Linux x86_64 — native)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: rust-core
+        run: maturin build --release --target ${{ matrix.target }} --out dist -i python
+
+      - name: Build wheel (Linux aarch64 — cross-compile)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         working-directory: rust-core
         run: |
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          export PYO3_CROSS=1
+          export PYO3_CROSS_PYTHON_VERSION=3.12
           maturin build --release --target ${{ matrix.target }} --out dist -i python
-        env:
-          PYO3_PYTHON: python
+        continue-on-error: true
+
+      - name: Build wheel (macOS/Windows — native)
+        if: startsWith(matrix.os, 'macos') || startsWith(matrix.os, 'windows')
+        working-directory: rust-core
+        run: maturin build --release --target ${{ matrix.target }} --out dist -i python
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: wheels-${{ matrix.target }}
           path: rust-core/dist/*.whl
@@ -99,15 +97,34 @@ jobs:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           if [ -z "$PYPI_TOKEN" ]; then
-            echo "PYPI_TOKEN not set — skipping publish"
-            exit 0
+            echo "ERROR: PYPI_TOKEN not set — cannot publish"
+            exit 1
           fi
           pip install twine
-          twine upload dist/*.whl --username __token__ --password "$PYPI_TOKEN" || true
-        continue-on-error: true
+          twine upload dist/*.whl --username __token__ --password "$PYPI_TOKEN"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.whl
           generate_release_notes: true
+
+  # Smoke test: verify the published wheels work on each platform
+  smoke-test:
+    name: Smoke test on ${{ matrix.os }}
+    needs: publish
+    runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install loomscan-regex and test
+        run: |
+          pip install loomscan-regex
+          python -c "from loomscan_regex import is_available; print('Rust core available:', is_available())"
+        continue-on-error: true

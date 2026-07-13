@@ -2,9 +2,9 @@ name: LoomScan
 
 on:
   pull_request:
-    branches: [main, master, develop]
+    branches: [m[main, master, develop]
   push:
-    branches: [main, master]
+    branches: [m[main, master]
 
 jobs:
   loomscan:
