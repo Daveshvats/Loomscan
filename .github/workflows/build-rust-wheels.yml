@@ -26,6 +26,9 @@ jobs:
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          # macOS Apple Silicon (M1/M2/M3)
+          - os: macos-14
+            target: aarch64-apple-darwin
 
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +65,8 @@ jobs:
           maturin build --release --target ${{ matrix.target }} --out dist -i python
         continue-on-error: true
 
-      - name: Build wheel (Windows — native)
-        if: startsWith(matrix.os, 'windows')
+      - name: Build wheel (Windows / macOS — native)
+        if: startsWith(matrix.os, 'windows') || startsWith(matrix.os, 'macos')
         working-directory: rust-core
         run: maturin build --release --target ${{ matrix.target }} --out dist -i python
 
@@ -117,7 +120,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-14]
     steps:
       - uses: actions/setup-python@v5
         with:
