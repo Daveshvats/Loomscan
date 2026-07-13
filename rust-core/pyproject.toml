@@ -14,7 +14,7 @@ build-backend = "maturin"
 
 [project]
 name = "loomscan-regex"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-performance Rust regex engine for LoomScan YAML rule packs"
 requires-python = ">=3.8"
 classifiers = [
