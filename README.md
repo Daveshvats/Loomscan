@@ -1,304 +1,573 @@
-# LoomScan — Static + Test + Constraint Analysis
+<p align="center">
+  <img src="assets/loomscan-logo.png" width="200" height="200" alt="LoomScan Logo" />
+</p>
 
-> **v5.9** — A deterministic-first, type-2 fuzzy aggregated bug detection pipeline with **2,095 rules across 40 packs covering 24 languages**, **107 auto-fix patterns**, **275 secret detection patterns**, **10 unique differentiators**, and **80+ CLI commands**. Free, offline, and production-ready. Native YAML rule engine (no semgrep dependency), multi-language CPG def-use chains, incremental CPG caching, SARIF Pro tier with threadFlow, **premium animated TUI mascot (real pixel-art spider via Kitty/iTerm2 inline-image protocols, with ASCII fallback) + progress bar**, **optional Rust regex core** for 10-50× faster pattern matching, and a **3-tier install model** (`pip install loomscan` / `[full]` / `[fast]`).
+<h1 align="center">LoomScan</h1>
 
-## Quick Start
+<p align="center">
+  <strong>Static + Test + Constraint Analysis — a deterministic-first, type-2 fuzzy aggregated bug detection pipeline</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Daveshvats/loomscan/actions"><img src="https://github.com/Daveshvats/loomscan/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/loomscan/"><img src="https://img.shields.io/pypi/v/loomscan.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/loomscan/"><img src="https://img.shields.io/pypi/dm/loomscan.svg" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Daveshvats/loomscan.svg" alt="License"></a>
+  <a href="https://github.com/Daveshvats/loomscan"><img src="https://img.shields.io/github/stars/Daveshvats/loomscan.svg?style=social" alt="Stars"></a>
+</p>
+
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-installation">Installation</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="GUIDE.md">Full Guide</a> ·
+  <a href="#-publishing-guide">Publishing</a>
+</p>
+
+---
+
+## 🕷️ What is LoomScan?
+
+LoomScan is a **free, offline, multi-language static analysis pipeline** that detects bugs, security vulnerabilities, and code quality issues across **24 programming languages**. It uses an **Interval Type-2 Fuzzy Inference System** (IT2-FIS) to aggregate findings from 42+ detection engines into confidence-interval-based decisions — no other SAST tool does this.
+
+### Why LoomScan?
+
+| Capability | LoomScan | Semgrep | SonarQube | Qodana |
+|---|:---:|:---:|:---:|:---:|
+| **FIS confidence intervals** | ✅ | ❌ | ❌ | ❌ |
+| **LLM-verify by execution** | ✅ | ❌ | ❌ | ❌ |
+| **Counterfactual mutation** | ✅ | ❌ | ❌ | ❌ |
+| **Metamorphic testing** | ✅ | ❌ | ❌ | ❌ |
+| **Knowledge graph + blast radius** | ✅ | ❌ | ❌ | ❌ |
+| **Rule auto-mining from git history** | ✅ | ❌ | ❌ | ❌ |
+| **Spec mining (adaptive patterns)** | ✅ | ❌ | ❌ | ❌ |
+| **9-level strictness (PHPStan-style)** | ✅ | ❌ | ❌ | ❌ |
+| **`--uncertain` flag (30-70% band)** | ✅ | ❌ | ❌ | ❌ |
+| **Free + offline** | ✅ | ✅ CE | ⚠️ CE limits | ❌ Paid |
+| **Languages** | **24** | 30+ | 30+ | 60+ |
+| **Rules** | **2,095** | 3,000+ | 5,000+ | 3,000+ |
+| **Autofix patterns** | **107** | ~50 | ~200 | ~300+ |
+| **Secret detection** | **275** | 200+ | Enterprise | ✅ |
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# 3-tier install model — pick the tier that fits your needs:
-
-# Tier 1: Basic (pure Python, works everywhere, no compilation)
+# Install
 pip install loomscan
 
-# Tier 2: Full analysis (adds tree-sitter for CPG/def-use chains)
-pip install loomscan[full]
-
-# Tier 3: Performance (adds Rust core for 10-50x faster scanning)
-pip install loomscan[fast]
-
-# Verify your install (shows which tier is active):
-loomscan doctor
-
-# One-command quickstart (creates config, runs scan, shows summary):
+# One-command quickstart (creates config, runs scan, shows summary)
 loomscan quickstart /path/to/your/code
-
-# Or step by step:
-loomscan init                    # Create .loomscan.yaml config
-loomscan check --full            # Scan the full repo (with Loomy the spider mascot!)
-loomscan check --full --no-tui   # CI mode (no animation)
-loomscan check --full --summary  # Compact grouped output
-loomscan gate --full --preset strict  # Quality gate (SonarQube-style)
-loomscan fix --apply             # Apply auto-fixes
-loomscan dashboard --repo . --open   # Generate HTML dashboard + open in browser
 ```
 
-## What's New in v5.9
+That's it. LoomScan will:
+1. ✅ Create a `.loomscan.yaml` config
+2. 🔍 Run a full scan (all 42 engines)
+3. 📊 Show a summary of findings by severity
+4. 📋 Print next steps
 
-Loomy gets a premium graphics upgrade, and the doctor gets smarter.
+```
+==================================================
+  LoomScan Quick Start — Scan Complete
+==================================================
+  Total findings: 14
+  Critical: 0
+  High:     1
+  Medium:   3
+  Low:      10
+  Decision: warn
+==================================================
 
-| Change | What it does |
-|--------|--------------|
-| **Premium mascot via inline-image protocols** | On Kitty, iTerm2, WezTerm, VS Code, and Ghostty terminals, Loomy is now rendered as **real pixel-art PNG frames** (24-frame animation, anti-aliased, 200×200) using the Kitty graphics protocol or iTerm2 inline-image protocol. No more blocky ASCII — it's a real animated spider. Falls back to ASCII art on terminals without image support. |
-| **Terminal auto-detection** | `loomscan/tui/image_render.py` auto-detects which protocol your terminal supports (Kitty / iTerm2 / Sixel / ASCII) via `$TERM`, `$TERM_PROGRAM`, `$LC_TERMINAL` env vars. No configuration needed — it just works. |
-| **Doctor shows mascot renderer** | `loomscan doctor` now reports which terminal protocol is active and how many animation frames are loaded, so you can verify the premium mascot is working. |
-| **Doctor skfuzzy fix** | Fixed the cosmetic bug where `scikit-fuzzy` showed as `[FAIL]` even when installed — the doctor now checks the correct import name (`skfuzzy`) and shows the pip package name (`scikit-fuzzy`) in suggestions. |
-| **Spider GIF optimized** | Original 4.7MB / 120-frame GIF → 112KB optimized GIF + 131KB of 24 PNG frames (243KB total assets). Ships in the pip package via `[tool.setuptools.package-data]`. |
+📋 Next steps:
+  1. View detailed findings:  loomscan check --full --summary
+  2. View JSON output:        loomscan check --full --json
+  3. Generate dashboard:      loomscan dashboard --repo .
+  4. Run quality gate:        loomscan gate --full --preset balanced
+  5. Apply auto-fixes:        loomscan fix --apply
+```
+
+---
+
+## 📦 Installation
+
+LoomScan uses a **3-tier installation model** — start basic, add features as needed:
+
+### Tier 1: Core (5 seconds, pure Python, works everywhere)
 
 ```bash
-# On a supporting terminal (Kitty/iTerm2/WezTerm/VS Code/Ghostty):
-loomscan check --full
-# → Loomy appears as a real animated pixel-art spider 🕷️
+pip install loomscan
+```
 
-# On a plain terminal (Linux console, CI log):
-loomscan check --full
-# → Loomy falls back to ASCII spider (still animated, 8-frame weaving cycle)
+- All 2,095 rules, 78 CLI commands, IT2-FIS brain
+- No compilation, no Rust, no tree-sitter
+- Works on Linux, macOS, Windows (Python 3.9+)
 
-# Check which renderer is active:
+### Tier 2: Full Analysis (adds tree-sitter for CPG/def-use chains)
+
+```bash
+pip install loomscan[full]
+```
+
+- Everything in Tier 1, plus:
+- Tree-sitter grammars for 8 languages (deep CPG/taint tracking)
+- Hypothesis for property-based testing
+- pip-audit for supply chain CVE checks
+
+### Tier 3: Performance (adds Rust core for 10-50× faster scanning)
+
+```bash
+pip install loomscan[fast]
+```
+
+- Everything in Tier 2, plus:
+- `loomscan-regex` Rust core (10-50× faster YAML rule scanning)
+- Pre-built binary wheels — no Rust compiler needed
+
+### Verify your install
+
+```bash
 loomscan doctor
-# → "TUI mascot: [IMAGE] Terminal protocol: kitty — Loomy renders as real pixel art!"
 ```
 
-## What's New in v5.8
+```
+LoomScan v5.9.0 — health check
+  Python:      3.12.1 (x86_64)
+  Platform:    Linux 6.5.0
 
-The mascot is now a real spider, the install is now 3-tier, and there's a `doctor` command.
+Tier 1 — Core (always required):
+  [OK]   click, rich, yaml, jsonschema, numpy, scikit-fuzzy
 
-| Change | What it does |
-|--------|--------------|
-| **Loomy redesigned as a real spider** | The mascot is now clearly a SPIDER — 8 articulated legs, abdomen + cephalothorax, spinneret, fangs. An 8-frame weaving cycle shows a web growing from 2 anchor strands → full orb web with radial spokes + sticky capture spiral. The spider's eyes change from `-_-` (focused) to `^ ^` (happy) when the web is complete. |
-| **3-tier install model** | `pip install loomscan` (Tier 1, pure Python) / `pip install loomscan[full]` (Tier 2, +tree-sitter) / `pip install loomscan[fast]` (Tier 3, +Rust core). All dependencies have pre-built wheels — no compilation needed on any platform. |
-| **`loomscan doctor` command** | Health check that shows install tier, Rust core status, tree-sitter availability, rule count, and external tools. Exit code 0/1/2 indicates health. Run after install to verify everything works. |
-| **Rust wheel CI workflow** | `.github/workflows/build-rust-wheels.yml` builds pre-built binary wheels for Linux x86_64/aarch64, macOS Intel/ARM, and Windows x86_64. Users get `pip install loomscan[fast]` with zero compilation. |
-| **`tree-sitter` moved to `[full]`** | v5.7 required tree-sitter as a hard dependency. v5.8 makes it optional (`pip install loomscan[full]`). Tier 1 install is now pure Python and works on any platform without compilation. |
+Tier 2 — Full analysis (tree-sitter, optional):
+  [OK]   tree_sitter_python, tree_sitter_javascript, ...
+  → All 8 tree-sitter grammars installed
 
-## What's New in v5.7
+Tier 3 — Rust core (10-50x faster scanning, optional):
+  [OK]   loomscan-regex active
+  → YAML engine: Rust core (10-50x faster)
 
-Two big UX wins + the Rust core comes online:
-
-| Change | What it does |
-|--------|--------------|
-| **Animated TUI mascot (Loomy)** | While the pipeline runs, an ASCII spider "Loomy" weaves a web in your terminal — 6-frame walk cycle, phase-aware speech bubbles. Like the mascots in claude-code / opencode. Auto-disabled in CI / pipes / `--no-tui`. |
-| **Progress bar** | Rich-powered 7-stage tracker: `Layers → Taint & CPG → Research Engines → Multi-lang → Precision → FIS Brain → AutoFix`. Shows `[████░░░] N/7` + live findings counter + elapsed seconds. No more "is it stuck?" |
-| **`--no-tui` flag** | Disables mascot + progress bar for CI logs / piping to file. |
-| **Rust regex core (compiled)** | `rust-core/` now compiles to a real native extension via `maturin`. `yaml_engine.py` auto-detects the Rust engine and uses it for 10-50× faster regex matching, with seamless fallback to Python `re`. |
-| **README honest version** | README header finally matches `pyproject.toml` (was stuck on v5.4 since v5.4). |
-
-```bash
-loomscan check --full                    # with mascot + progress bar
-loomscan check --full --no-tui           # CI mode (plain output)
-loomscan check --full --json             # JSON output (auto-disables TUI)
+YAML engine:
+  Rust core active: True
+  Rule packs: 40 packs, 2095 total rules
 ```
 
-## What Makes LoomScan Unique
+---
 
-LoomScan has **9 capabilities no competitor offers**:
+## ✨ Features
+
+### 10 Unique Differentiators (no competitor has these)
 
 | # | Feature | What It Does |
-|---|---------|-------------|
-| 1 | **IT2-FIS Brain** | Type-2 fuzzy inference system with 50 rules. Produces confidence *intervals* (not point estimates). Aggregates severity, confidence, blast radius, exploitability, and source-layer reliability into BLOCK/WARN/PASS/UNCERTAIN decisions. |
-| 2 | **LLM-Verify** | LLM proposes hypotheses ("function crashes on None input"); LoomScan verifies by *execution*. Only confirmed bugs are reported. PRM-gated (process reward model scores the LLM's reasoning). |
-| 3 | **Counterfactual Mutation** | Mutates the code (removes lines, injects guards) and re-runs detectors. If the finding disappears → true positive (boost confidence). If it persists → false positive (demote). |
-| 4 | **Metamorphic Testing** | Oracle-free bug detection: `sort(sort(x)) == sort(x)`, `hash(x) == hash(x)`. Catches semantic bugs no test oracle can. |
-| 5 | **Knowledge Graph** | Builds a codebase structure graph (1,400+ nodes for a typical project). `loomscan impact --changed file.py` shows blast radius (which functions are affected by your change). |
-| 6 | **Rule Auto-Mining** | `loomscan mine` scans git history for bug-fix commits and auto-generates Semgrep rules from the diff. Every bug you've ever fixed becomes a permanent rule. |
-| 7 | **Spec Mining** | `loomscan spec` mines API usage patterns from your codebase (e.g., "open() is always followed by close()") and flags deviations. Adaptive — learns from your code, not from generic rules. |
-| 8 | **--uncertain Flag** | `loomscan check --uncertain` shows only 30-70% confidence findings — the ones worth human review. No competitor has this. |
-| 9 | **9-Level Strictness** | PHPStan-inspired strictness levels (1-9). Level 1 = only critical findings; Level 9 = everything including style issues. |
+|---|---|---|
+| 1 | **🧠 IT2-FIS Brain** | Type-2 fuzzy inference with 50 rules. Produces confidence *intervals* (not point scores). Aggregates severity, confidence, blast radius, exploitability into BLOCK/WARN/PASS/UNCERTAIN. |
+| 2 | **🤖 LLM-Verify** | LLM proposes hypotheses ("function crashes on None"); LoomScan verifies by *execution*. Only confirmed bugs are reported. PRM-gated. |
+| 3 | **🔄 Counterfactual Mutation** | Mutates code (removes lines, injects guards) and re-runs detectors. If finding disappears → true positive (boost). If it persists → false positive (demote). 9 languages. |
+| 4 | **🔬 Metamorphic Testing** | Oracle-free bug detection: `sort(sort(x)) == sort(x)`. Catches semantic bugs no oracle can. JS/Java/Go. |
+| 5 | **🕸️ Knowledge Graph** | Builds a codebase graph (1,400+ nodes). `loomscan impact --changed file.py` shows blast radius. |
+| 6 | **⛏️ Rule Auto-Mining** | `loomscan mine` scans git history for bug-fix commits and auto-generates Semgrep rules. Every bug you've fixed becomes a permanent rule. |
+| 7 | **📐 Spec Mining** | `loomscan spec` mines API usage patterns from your codebase and flags deviations. Adaptive — learns from your code. |
+| 8 | **🎯 `--uncertain` Flag** | Shows only 30-70% confidence findings — the ones worth human review. |
+| 9 | **📊 9-Level Strictness** | PHPStan-inspired levels (1-9). Level 1 = critical only; Level 9 = everything. |
+| 10 | **⚡ Rust Core** | Optional Rust regex engine for 10-50× faster YAML rule scanning. Pre-built wheels. |
 
-## Rule Coverage
+### Detection Coverage
 
 | Category | Count | Details |
 |----------|-------|---------|
-| **YAML pack rules** | 1,995 | 39 packs across 24 languages |
-| **Secret patterns** | 275 | AWS, Stripe, GitHub, Slack, OpenAI, Anthropic, GCP, Azure, +200 more |
-| **Auto-fix patterns** | 107 | Python, JS, Java, Go, C/C++, Rust, PHP, Ruby, C#, Kotlin, SQL, Bash, Dart, Swift, Scala |
-| **CPG queries** | 6 | Taint flows, unused variables, auth patterns, complexity, def-use chains, cross-function taint |
-| **Taint sinks** | 28 | Cross-file source→sink patterns |
-| **Typestate protocols** | 5 | File, connection, payment, session, transaction |
+| **YAML pack rules** | 2,095 | 40 packs across 24 languages |
+| **Autofix patterns** | 107 | Python, JS, K8s, Docker, Rust, Java, Go, Kotlin, SQL, Bash, Dart, Swift, Scala |
+| **Secret patterns** | 275 | AWS, GitHub, Stripe, Slack, OpenAI, GCP, Azure, 200+ services |
+| **Taint sinks** | 88 | eval, exec, system, SQL, render, deserialization, path traversal |
+| **Interprocedural KB** | 200 | Python (18), JavaScript (78), Java (30), Go (69), C++ (5) |
+| **Typestate protocols** | 5 | file, connection, payment, session, transaction |
+| **CPG queries** | 6 | taint flows, def-use chains, cross-function taint, unused vars, auth patterns, complexity |
+| **CLI commands** | 78 | check, gate, impact, lsp, bot, playground, monorepo, mine, spec, rules, fix, ... |
 
-## Supported Languages (24)
+---
 
-Python, JavaScript, TypeScript, Go, Java, Rust, C, C++, PHP, Ruby, C#, Swift, Scala, Kotlin, SQL, Bash, Dart, Lua, R, Haskell, Elixir, Objective-C, Groovy, Julia, Perl, COBOL
+## 🏗️ Architecture
 
-## CLI Commands (77)
-
-### Core
-```bash
-loomscan check [--full] [--json] [--sarif --output file] [--strictness N] [--uncertain]
-loomscan gate [--full] [--preset strict|balanced|permissive|custom] [--max-critical N] [--max-high N]
-loomscan fix [--apply] [--finding-id ID]
-loomscan init / install-tools / doctor
+```mermaid
+graph TB
+    subgraph "Input"
+        A[Git Diff / Full Repo]
+    end
+    
+    subgraph "L0: Fast Layer (<5s)"
+        B1[Regex SAST]
+        B2[Secret Detection<br/>275 patterns]
+        B3[IaC Scanner<br/>Docker/K8s/Terraform]
+        B4[Commit Risk]
+    end
+    
+    subgraph "L1-L4: Deep Layers"
+        C1[L1: Property Testing<br/>Hypothesis]
+        C2[L2: Test Coverage]
+        C3[L3: Invariants<br/>Daikon-style]
+        C4[L4: Fuzzing<br/>Atheris]
+    end
+    
+    subgraph "L5-L8: Advanced Layers"
+        D1[L5: Policy<br/>OPA/Rego]
+        D2[L6: Symbolic<br/>Z3/Kani]
+        D3[L7: Simulation]
+        D4[L8: Autofix<br/>107 patterns]
+    end
+    
+    subgraph "Research Engines"
+        E1[CPG + Cross-file Taint]
+        E2[Typestate Analysis]
+        E3[Metamorphic Testing]
+        E4[Counterfactual Mutation]
+        E5[Spec Mining]
+        E6[Knowledge Graph]
+        E7[Interprocedural Taint]
+        E8[LLM-Verify]
+    end
+    
+    subgraph "🧠 IT2-FIS Brain"
+        F1[50 Fuzzy Rules]
+        F2[Confidence Intervals]
+        F3[Karnik-Mendel Reduction]
+        F4[BLOCK / WARN / PASS / UNCERTAIN]
+    end
+    
+    subgraph "Output"
+        G1[TUI + Loomy Mascot 🕷️]
+        G2[JSON]
+        G3[SARIF + threadFlow]
+        G4[HTML Dashboard]
+        G5[CycloneDX SBOM]
+    end
+    
+    A --> B1 & B2 & B3 & B4
+    A --> C1 & C2 & C3 & C4
+    A --> D1 & D2 & D3 & D4
+    A --> E1 & E2 & E3 & E4 & E5 & E6 & E7 & E8
+    B1 & B2 & B3 & B4 --> F1
+    C1 & C2 & C3 & C4 --> F1
+    D1 & D2 & D3 & D4 --> F1
+    E1 & E2 & E3 & E4 & E5 & E6 & E7 & E8 --> F1
+    F1 --> F2 --> F3 --> F4
+    F4 --> G1 & G2 & G3 & G4 & G5
+    
+    style F1 fill:#ff6b6b,color:#fff
+    style F2 fill:#ff6b6b,color:#fff
+    style F3 fill:#ff6b6b,color:#fff
+    style F4 fill:#ff6b6b,color:#fff
 ```
 
-### IDE Integration
-```bash
-loomscan lsp                    # Start LSP server (VS Code / JetBrains / Neovim)
-loomscan watch                  # Incremental scanning with sub-second feedback
-loomscan playground             # Web UI for testing regex rules (localhost:8765)
+### Pipeline Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    LoomScan Pipeline                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐           │
+│  │  L0     │  │  L1-L4  │  │  L5-L8  │  │ Research│           │
+│  │  Fast   │  │  Deep   │  │ Advanced│  │ Engines │           │
+│  │ <5s     │  │         │  │         │  │         │           │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘           │
+│       │            │            │            │                  │
+│       └────────────┴────────────┴────────────┘                  │
+│                         │                                        │
+│                    ┌────▼────┐                                   │
+│                    │ IT2-FIS │  ← 50 fuzzy rules                 │
+│                    │  Brain  │  ← Confidence intervals           │
+│                    └────┬────┘                                   │
+│                         │                                        │
+│              ┌──────────┼──────────┐                             │
+│              ▼          ▼          ▼                             │
+│         ┌────────┐ ┌────────┐ ┌────────┐                        │
+│         │ BLOCK  │ │  WARN  │ │  PASS  │                        │
+│         │  (1)   │ │  (0)   │ │  (0)   │                        │
+│         └────────┘ └────────┘ └────────┘                        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Analysis
-```bash
-loomscan cpg --query taint|unused|auth|complexity|def_use|cross_func
-loomscan typestate             # State machine violations
-loomscan metamorphic           # Oracle-free bug detection
-loomscan differential          # Refactor verification
-loomscan llm-verify            # LLM proposes, LoomScan verifies by execution
-loomscan impact --changed file.py  # Blast radius analysis
-loomscan spec                  # Spec mining (adaptive API pattern learning)
-loomscan mine                  # Rule auto-mining from git history
-```
+---
 
-### Rules
-```bash
-loomscan rules list             # List all 39 built-in packs
-loomscan rules show <pack>      # Show rules in a pack
-loomscan rules pull <pack>      # Pull external pack
-loomscan rules submit --pack my-rules.yml --name my-pack --language python  # Submit community rules
-```
+## 🌍 Supported Languages (24)
 
-### CI/CD
-```bash
-loomscan bot --pr 42 --token $GITHUB_TOKEN  # PR comment bot (inline review comments)
-loomscan check --sarif --output loomscan.sarif   # SARIF for GitHub Code Scanning
-loomscan gate --preset strict                 # Quality gate (exit 0=pass, 1=fail)
-```
+| Language | Rules | CPG | Taint | Typestate | Autofix |
+|----------|:-----:|:---:|:-----:|:---------:|:-------:|
+| **Python** | 250 | ✅ | ✅ | ✅ | ✅ |
+| **JavaScript/TS** | 312 | ✅ | ✅ | ✅ | ✅ |
+| **Java** | 222 | ✅ | ✅ | ✅ | ✅ |
+| **C/C++** | 94 | ✅ | ⚠️ | ✅ | ✅ |
+| **Go** | 49 | ✅ | ⚠️ | ✅ | ✅ |
+| **Rust** | 61 | ⚠️ | ⚠️ | ❌ | ✅ |
+| **PHP** | 102 | ❌ | ❌ | ❌ | ✅ |
+| **Ruby** | 79 | ❌ | ❌ | ❌ | ✅ |
+| **C#** | 51 | ❌ | ❌ | ❌ | ❌ |
+| **Swift** | 30 | ❌ | ❌ | ❌ | ✅ |
+| **Scala** | 30 | ❌ | ❌ | ❌ | ✅ |
+| **Kotlin** | 50 | ❌ | ❌ | ❌ | ✅ |
+| **SQL** | 91 | ❌ | ❌ | ❌ | ✅ |
+| **Bash** | 92 | ❌ | ❌ | ❌ | ✅ |
+| **Dart** | 30 | ❌ | ❌ | ❌ | ✅ |
+| **Lua** | 35 | ❌ | ❌ | ❌ | ❌ |
+| **R** | 35 | ❌ | ❌ | ❌ | ❌ |
+| **Haskell** | 30 | ❌ | ❌ | ❌ | ❌ |
+| **Elixir** | 30 | ❌ | ❌ | ❌ | ❌ |
+| **Objective-C** | 30 | ❌ | ❌ | ❌ | ❌ |
+| **Groovy** | 30 | ❌ | ❌ | ❌ | ❌ |
+| **Julia** | 30 | ❌ | ❌ | ❌ | ❌ |
+| **Perl** | 30 | ❌ | ❌ | ❌ | ❌ |
+| **COBOL** | 25 | ❌ | ❌ | ❌ | ❌ |
 
-### Quality
-```bash
-loomscan strictness --level N   # Set strictness (1-9)
-loomscan code-quality           # Multi-language code quality
-loomscan config-scan            # Scan config files for secrets
-loomscan duplicates             # Code duplication detection
-loomscan deadcode               # Dead code analysis
-loomscan hotspot                # Security hotspot detection
-```
+---
 
-## IDE Extensions
+## 🖥️ IDE Integration
 
 ### VS Code
+
 ```bash
+# Install from VSIX (pre-built in repo)
 code --install-extension editor/vscode-loomscan/loomscan-0.2.0.vsix
 ```
+
+Features:
 - Real-time diagnostics via LSP
-- Hover shows rule details + fix suggestions
-- Code actions: "Apply LoomScan fix" (quickfix)
-- 6 commands: CheckRepo, CheckFile, ApplyFix, ShowUncertain, Gate, Restart
+- Hover for rule documentation + fix suggestions
+- Code actions ("Apply LoomScan fix")
 - 17 language activations
 
 ### JetBrains (IntelliJ, PyCharm, WebStorm, etc.)
-```bash
-cd editor/intellij-loomscan && ./gradlew buildPlugin
-# Install: Settings > Plugins > Install from Disk > build/distributions/*.zip
-```
-- LSP support via IntelliJ 2023.1+ platform
-- 7 actions, settings panel, tool window, status bar widget
-- CI builds automatically via `.github/workflows/build-jetbrains.yml`
-
-## Architecture
-
-```
-git diff / --full
-   │
-   ├─► L0  Fast hooks (1,995 YAML rules + 275 secret patterns + 107 autofix)
-   ├─► L0  CPG cross-file taint tracking + def-use chains
-   ├─► L0  Typestate analysis (5 protocols)
-   ├─► L0  Spec mining (adaptive API pattern learning)
-   ├─► L0b Supply chain (pip-audit, npm audit, osv-scanner, cargo audit, govulncheck)
-   ├─► L0e IaC scanning (Dockerfile, K8s, Terraform, CloudFormation, GitHub Actions)
-   ├─► L0f Commit risk (size, time, message, author, reverts)
-   ├─► L1  Property tests (Hypothesis) + Metamorphic tests + Differential tests
-   ├─► L2  Mutation testing (mutmut)
-   ├─► L3  Invariant checks (Daikon-style)
-   ├─► L4  Directed greybox fuzz (Atheris)
-   ├─► L5  Policy-as-code (OPA/Rego)
-   ├─► L6  Symbolic verification (Kani for Rust)
-   ├─► L7  Deterministic simulation
-   ├─► L8  Auto-Fix (107 patterns across 15 languages)
-   │
-   ▼
-┌─────────────────────────────────────────────────────┐
-│  IT2-FIS Aggregation Brain (50 fuzzy rules)         │
-│  + Bayesian second opinion (BBN with CPTs)          │
-│  + Counterfactual mutation verification             │
-│  + LLM-as-oracle (PRM-gated, execution-verified)    │
-│  Output: BLOCK / WARN / PASS / UNCERTAIN            │
-│  + Confidence intervals (not point estimates)       │
-└─────────────────────────────────────────────────────┘
-   │
-   ▼
-SARIF 2.1.0 + Rich TUI + HTML + JSON + CycloneDX SBOM + SPDX SBOM
-```
-
-## Quality Gates (SonarQube-style)
 
 ```bash
-# Presets
-loomscan gate --full --preset strict       # 0 critical, 0 high, 5/1k LOC
-loomscan gate --full --preset balanced     # 0 critical, 5 high, 10/1k LOC (DEFAULT)
-loomscan gate --full --preset permissive   # 5 critical, 20 high, 20/1k LOC
-loomscan gate --full --preset custom --max-critical 0 --max-high 10
-
-# Exit codes: 0=pass, 1=fail, 2=error, 3=scanner failure
+# Build from source (CI builds automatically)
+cd editor/intellij-loomscan
+./gradlew buildPlugin
+# Install: Settings → Plugins → ⚙️ → Install from Disk → build/distributions/*.zip
 ```
 
-## Monorepo Support
+### LSP Server (any editor)
+
+```bash
+loomscan lsp --repo .
+```
+
+Works with Neovim, Emacs, Sublime Text, Helix, and any LSP-compatible editor.
+
+---
+
+## 📊 CLI Commands (78)
+
+<details>
+<summary><strong>Click to expand full command list</strong></summary>
+
+| Category | Commands |
+|----------|----------|
+| **Core** | `check`, `quickstart`, `gate`, `dashboard`, `fix`, `doctor` |
+| **IDE** | `lsp`, `watch` |
+| **Analysis** | `cpg`, `taint`, `typestate`, `metamorphic`, `differential`, `deadcode`, `duplicates`, `hotspot`, `pii`, `architecture`, `doc-audit`, `nullness`, `contracts`, `concurrency`, `crypto`, `flawfinder`, `malicious`, `rca`, `impact`, `spec` |
+| **Rules** | `rules`, `mine`, `rules-config`, `rule-lint`, `similar` |
+| **CI/CD** | `bot`, `pre-commit`, `sbom`, `history-scan`, `missing-patches`, `update-cves`, `maven-cve`, `supply-chain`, `ffi-check` |
+| **Quality** | `strictness`, `profile`, `baseline`, `suppressions`, `tuning`, `precision`, `feedback`, `issue`, `runs`, `cache`, `coverage`, `toxicity`, `trace`, `optimize`, `gnn`, `dashboard`, `behavioral`, `code-quality`, `config-scan`, `consistency`, `business-logic`, `source-discovery`, `modern`, `iac`, `js-multiline`, `js-quality`, `ast-analysis`, `symbolic`, `taint-analysis` |
+
+</details>
+
+### Most-used commands
+
+```bash
+# Scan a git diff (fast, for PRs)
+loomscan check
+
+# Full repo scan
+loomscan check --full
+
+# Grouped summary (compact output)
+loomscan check --full --summary
+
+# JSON output (for CI/CD)
+loomscan check --full --json
+
+# SARIF output (for GitHub Code Scanning)
+loomscan check --full --sarif --output loomscan.sarif
+
+# Show only uncertain findings (30-70% confidence)
+loomscan check --full --uncertain
+
+# Quality gate (SonarQube-style)
+loomscan gate --full --preset strict
+
+# Blast radius analysis
+loomscan impact --changed src/app.py
+
+# Apply auto-fixes
+loomscan fix --apply
+
+# Generate HTML dashboard
+loomscan dashboard --repo .
+
+# Run rule auto-mining on git history
+loomscan mine --repo . --max-commits 100
+
+# Run spec mining (adaptive API pattern learning)
+loomscan spec --repo .
+```
+
+---
+
+## 🔧 Configuration
+
+Create a `.loomscan.yaml` in your repo root (or run `loomscan quickstart`):
 
 ```yaml
-# .loomscan.yaml
+# LoomScan configuration
+strictness: 5  # 1-9 (PHPStan-style)
+
+# Enable/disable engines
+layers:
+  L0_fast:
+    enabled: true
+  L1_property:
+    enabled: false  # requires hypothesis
+  L4_fuzz:
+    enabled: false  # requires atheris
+
+# Quality gate thresholds
+gate:
+  max_critical: 0
+  max_high: 5
+  min_coverage: 80
+
+# Monorepo workspaces (optional)
 workspaces:
   - "apps/*"
   - "packages/*"
-workspace_exclude:
-  - "**/node_modules/**"
+  - "!apps/legacy"
+
+# FP learning (default: off)
+fp_learn_mode: false
 ```
 
-```bash
-loomscan monorepo --list     # List resolved workspaces
-loomscan monorepo --scan     # Scan each workspace, report findings
-loomscan monorepo --add 'services/*'
-```
+---
 
-## GitHub Actions Integration
+## 📈 GitHub Actions Integration
 
 ```yaml
 # .github/workflows/loomscan.yml
-- name: Install LoomScan
-  run: pip install --user .
-- name: Run LoomScan
-  run: loomscan check --sarif --output loomscan.sarif --strictness 5
-- name: Upload SARIF
-  uses: github/codeql-action/upload-sarif@v3
-  with:
-    sarif_file: loomscan.sarif
+name: LoomScan
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  loomscan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install loomscan
+      - run: loomscan check --sarif --output loomscan.sarif --full --strictness 5 || true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: loomscan.sarif
+      - name: Fail on critical only
+        if: always()
+        run: |
+          python3 -c "
+          import json
+          with open('loomscan.sarif') as f:
+              data = json.load(f)
+          for run in data.get('runs', []):
+              for result in run.get('results', []):
+                  sev = result.get('properties', {}).get('severity', '').lower()
+                  if sev == 'critical':
+                      print(f'CRITICAL: {result.get(\"ruleId\")}')
+                      exit(1)
+          print('No critical findings')
+          "
 ```
 
-```yaml
-# .github/workflows/loomscan-bot.yml — PR comment bot
-- name: Run LoomScan PR Bot
-  run: loomscan bot --token ${{ secrets.GITHUB_TOKEN }}
+---
+
+## 🧪 Test Suite
+
+```bash
+# Run all tests
+python -m pytest tests/ -q
+
+# Current status: 915 passed, 37 skipped, 0 failed
 ```
 
-## Competitive Position
+| Test Category | Count | Purpose |
+|---|---|---|
+| Regression probes (v4.3-v4.14) | 150+ | Prevents historical bugs from returning |
+| Smoke tests (v4.33-v5.9) | 350+ | E2E verification of every feature |
+| Engine tests | 200+ | Individual engine correctness |
+| Integration tests | 100+ | Cross-engine corroboration |
+| Precision tests | 100+ | FIS aggregation + Bayesian |
 
-| Axis | LoomScan v4.43 | Semgrep | SonarQube | CodeQL |
-|------|-----------|---------|-----------|--------|
-| Total rules | ~2,700 | 3,000+ | 5,000+ | 1,500+ |
-| Languages | 24 | 30+ | 30+ | 6 (deep) |
-| Auto-fix | 107 | ~50 | ~200 | ❌ |
-| Secrets | 275 | 200+ | enterprise | ❌ |
-| FIS aggregation | ✅ | ❌ | ❌ | ❌ |
-| LLM-verify | ✅ | ❌ | ❌ | ❌ |
-| Rule mining | ✅ | ❌ | ❌ | ❌ |
-| Spec mining | ✅ | ❌ | ❌ | ❌ |
-| Free + offline | ✅ | ✅ CE | ⚠️ limits | ✅ |
-| IDE plugins | VS Code + JetBrains | ✅ | SonarLint | ❌ |
+---
 
-## Test Suite
+## 📚 Documentation
 
-- **717 tests passed**, 35 skipped (tree-sitter grammars), 0 failed
-- 291 smoke tests across v4.33-v4.43
-- E2E tests for: SARIF, cross-file taint, max-files override, Docker healthcheck, LSP hover/code actions, spec mining, def-use chains, fast_regex, rules submit, PR bot, playground, monorepo
+- **[GUIDE.md](GUIDE.md)** — Full 1,300-line user guide (installation, all 78 commands, configuration, examples)
+- **[RESEARCH_BUSINESS_LOGIC.md](RESEARCH_BUSINESS_LOGIC.md)** — Business logic detection research
+- **[RESEARCH_FRONTIER_SOLUTIONS.md](RESEARCH_FRONTIER_SOLUTIONS.md)** — Cutting-edge detection techniques
+- **[RESEARCH_MULTI_LANGUAGE_BL.md](RESEARCH_MULTI_LANGUAGE_BL.md)** — Multi-language business logic research
 
-## License
+---
 
-MIT.
+## 🤝 Contributing
+
+```bash
+# Clone
+git clone https://github.com/Daveshvats/loomscan.git
+cd loomscan
+
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
+python -m pytest tests/ -q
+
+# Submit a rule pack
+loomscan rules submit --pack my-rules.yml --name my-company-security --language python
+```
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE)
+
+---
+
+## 🙏 Acknowledgments
+
+- **Flawfinder** — C/C++ dangerous function database
+- **Kunlun-M** — Interprocedural taint analysis knowledge base
+- **Semgrep** — YAML rule pack format compatibility
+- **Daikon** — Invariant detection inspiration
+- **PHPStan** — 9-level strictness model
+- **SonarQube** — Quality gate + hotspot concepts
+- **CodeQL** — CPG + def-use chain inspiration
+
+---
+
+<p align="center">
+  <img src="assets/loomscan-logo.png" width="80" height="80" alt="LoomScan" />
+  <br>
+  <strong>LoomScan — Weaving a web of analysis 🕷️</strong>
+  <br><br>
+  <a href="https://github.com/Daveshvats/loomscan">GitHub</a> ·
+  <a href="https://pypi.org/project/loomscan/">PyPI</a> ·
+  <a href="GUIDE.md">Documentation</a>
+</p>
