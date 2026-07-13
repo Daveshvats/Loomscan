@@ -150,27 +150,33 @@ class TestDependencyManifestRegression:
     """
 
     def test_typescript_dependency_declared(self):
-        """tree-sitter-typescript must be in dependencies."""
+        """tree-sitter-typescript must be declared (v5.8: in [full] extra, not core deps)."""
         import tomllib
         pyproject = Path(__file__).parent.parent / "pyproject.toml"
         with open(pyproject, "rb") as f:
             data = tomllib.load(f)
-        deps = data.get("project", {}).get("dependencies", [])
-        assert any("tree-sitter-typescript" in d for d in deps), (
-            "tree-sitter-typescript must be declared in pyproject.toml dependencies. "
+        # v5.8: tree-sitter moved from core deps to [full] extra
+        core_deps = data.get("project", {}).get("dependencies", [])
+        full_deps = data.get("project", {}).get("optional-dependencies", {}).get("full", [])
+        all_deps = core_deps + full_deps
+        assert any("tree-sitter-typescript" in d for d in all_deps), (
+            "tree-sitter-typescript must be declared in pyproject.toml (core deps or [full] extra). "
             "LANGUAGE_EXTENSIONS advertises TypeScript support, so the dependency "
             "must be declared for a clean pip install to actually get it."
         )
 
     def test_rust_dependency_declared(self):
-        """tree-sitter-rust must be in dependencies."""
+        """tree-sitter-rust must be declared (v5.8: in [full] extra, not core deps)."""
         import tomllib
         pyproject = Path(__file__).parent.parent / "pyproject.toml"
         with open(pyproject, "rb") as f:
             data = tomllib.load(f)
-        deps = data.get("project", {}).get("dependencies", [])
-        assert any("tree-sitter-rust" in d for d in deps), (
-            "tree-sitter-rust must be declared in pyproject.toml dependencies."
+        # v5.8: tree-sitter moved from core deps to [full] extra
+        core_deps = data.get("project", {}).get("dependencies", [])
+        full_deps = data.get("project", {}).get("optional-dependencies", {}).get("full", [])
+        all_deps = core_deps + full_deps
+        assert any("tree-sitter-rust" in d for d in all_deps), (
+            "tree-sitter-rust must be declared in pyproject.toml (core deps or [full] extra)."
         )
 
     def test_mypy_in_dev_dependencies(self):

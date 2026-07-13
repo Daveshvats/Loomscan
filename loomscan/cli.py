@@ -153,6 +153,186 @@ def quickstart(repo: str, open_dashboard: bool):
             click.echo(f"Dashboard generation failed: {e}", err=True)
 
 
+@main.command("doctor")
+@click.option("--repo", default=".", help="Repository root (ignored — kept for backward compat)")
+def doctor_cmd(repo: str):
+    """v5.8: Health check — show install tier, Rust core status, tree-sitter availability, rule count.
+
+    Quickly verifies that LoomScan is correctly installed and shows which
+    features are available. Use this after `pip install loomscan[fast]` to
+    confirm the Rust core is active.
+
+    \b
+    Exit codes:
+      0 = all critical features working
+      1 = some features missing (still functional, but degraded)
+      2 = critical failure (LoomScan won't run)
+    """
+    from . import __version__
+    import platform
+    import sys
+
+    click.echo(f"LoomScan v{__version__} — health check")
+    click.echo(f"  Python:      {sys.version.split()[0]} ({platform.machine()})")
+    click.echo(f"  Platform:    {platform.system()} {platform.release()}")
+    click.echo()
+
+    # --- Tier 1: Core dependencies ---
+    # v5.9: Map package names (in pyproject.toml) to their actual import names.
+    # scikit-fuzzy installs as 'skfuzzy' module, pyyaml as 'yaml', etc.
+    click.echo("Tier 1 — Core (always required):")
+    core_deps = [
+        ("click", "click"),
+        ("rich", "rich"),
+        ("pyyaml", "yaml"),
+        ("jsonschema", "jsonschema"),
+        ("numpy", "numpy"),
+        ("scikit-fuzzy", "skfuzzy"),
+    ]
+    tier1_ok = True
+    for pkg_name, import_name in core_deps:
+        try:
+            __import__(import_name)
+            click.echo(f"  [OK]   {pkg_name}")
+        except ImportError:
+            click.echo(f"  [FAIL] {pkg_name}  (pip install {pkg_name})")
+            tier1_ok = False
+    click.echo()
+
+    # --- Tier 2: Full analysis (tree-sitter) ---
+    click.echo("Tier 2 — Full analysis (tree-sitter, optional):")
+    tree_sitter_langs = ["python", "javascript", "go", "java", "c", "cpp",
+                          "typescript", "rust"]
+    ts_available = 0
+    for lang in tree_sitter_langs:
+        try:
+            mod_name = f"tree_sitter_{lang}"
+            __import__(mod_name)
+            click.echo(f"  [OK]   tree_sitter_{lang}")
+            ts_available += 1
+        except ImportError:
+            click.echo(f"  [MISS] tree_sitter_{lang}  (pip install loomscan[full])")
+    if ts_available == 0:
+        click.echo("  → Install with: pip install loomscan[full]")
+    elif ts_available < len(tree_sitter_langs):
+        click.echo(f"  → {ts_available}/{len(tree_sitter_langs)} languages available")
+    click.echo()
+
+    # --- Tier 3: Rust core ---
+    click.echo("Tier 3 — Rust core (10-50x faster scanning, optional):")
+    try:
+        from loomscan_regex import is_available, engine_version, RegexEngine
+        if is_available():
+            click.echo(f"  [OK]   loomscan-regex v{engine_version()} — Rust core ACTIVE")
+            # Quick functional test
+            eng = RegexEngine()
+            ok = eng.add_rule("doctor-test", r"\beval\b", "high", "test", "CWE-95")
+            hits = eng.scan("x = eval(1)")
+            if ok and len(hits) == 1:
+                click.echo(f"  [OK]   Functional test passed (1 hit on eval fixture)")
+            else:
+                click.echo(f"  [WARN] Functional test unexpected: ok={ok}, hits={len(hits)}")
+        else:
+            click.echo("  [MISS] loomscan-regex installed but is_available()=False")
+            click.echo("  → Install with: pip install loomscan[fast]")
+    except ImportError:
+        click.echo("  [MISS] loomscan-regex not installed")
+        click.echo("  → Install with: pip install loomscan[fast]  (10-50x faster scanning)")
+    click.echo()
+
+    # --- v5.9: TUI mascot renderer ---
+    click.echo("TUI mascot (Loomy the spider):")
+    try:
+        from .tui.image_render import detect_terminal_protocol
+        protocol = detect_terminal_protocol()
+        if protocol == "ascii":
+            click.echo(f"  [ASCII] Terminal doesn't support inline images — using ASCII spider")
+            click.echo(f"          (Try Kitty, iTerm2, WezTerm, VS Code, or Ghostty for premium graphics)")
+        else:
+            click.echo(f"  [IMAGE] Terminal protocol: {protocol} — Loomy renders as real pixel art!")
+            # Check that frames are available
+            from .tui.image_render import _load_png_frames
+            frames = _load_png_frames()
+            click.echo(f"  [OK]    {len(frames)} animation frames loaded")
+    except Exception as e:
+        click.echo(f"  [WARN]  Could not check TUI mascot: {e}")
+    click.echo()
+
+    # --- yaml_engine Rust detection ---
+    click.echo("YAML engine:")
+    try:
+        from .yaml_engine import is_rust_core_active, count_applicable_rules
+        from .rules import get_builtin_pack_path
+        rust_active = is_rust_core_active()
+        click.echo(f"  Rust core active: {rust_active}")
+        # Count rules
+        from .rules import BUILTIN_PACKS
+        total_rules = 0
+        pack_count = 0
+        for pack_name in BUILTIN_PACKS:
+            pack_path = get_builtin_pack_path(pack_name)
+            if pack_path and pack_path.exists():
+                total, applicable, _unsupported = count_applicable_rules([pack_path])
+                total_rules += total
+                pack_count += 1
+        click.echo(f"  Rule packs: {pack_count} packs, {total_rules} total rules")
+    except Exception as e:
+        click.echo(f"  [WARN] Could not count rules: {e}")
+    click.echo()
+
+    # --- External tools ---
+    click.echo("External tools (optional, for extended features):")
+    external_tools = {
+        "semgrep": "Full YAML rule support (pattern-inside, metavariables)",
+        "gitleaks": "Secret scanning (L0b)",
+        "opa": "Policy evaluation (L5)",
+        "mutmut": "Mutation testing (L2)",
+        "pip-audit": "Python CVE checks (L0b)",
+    }
+    for tool, desc in external_tools.items():
+        import shutil
+        path = shutil.which(tool)
+        if path:
+            click.echo(f"  [OK]   {tool:12s} — {desc}")
+        else:
+            try:
+                __import__(tool.replace("-", "_"))
+                click.echo(f"  [OK]   {tool:12s} — {desc}")
+            except ImportError:
+                click.echo(f"  [MISS] {tool:12s} — {desc}")
+    click.echo()
+
+    # --- Verdict ---
+    click.echo("=" * 60)
+    if not tier1_ok:
+        click.echo("FAIL: Core dependencies missing. LoomScan won't run.")
+        click.echo("  Fix: pip install loomscan")
+        sys.exit(2)
+    elif ts_available == 0 and not (rust_active if 'rust_active' in dir() else False):
+        click.echo("OK — Tier 1 (core) working. Tiers 2 & 3 not installed.")
+        click.echo("  For full analysis: pip install loomscan[full]")
+        click.echo("  For 10-50x speed:  pip install loomscan[fast]")
+        sys.exit(1)
+    else:
+        tier = "1"
+        if ts_available > 0:
+            tier = "2"
+        try:
+            from loomscan_regex import is_available as rust_avail
+            if rust_avail():
+                tier = "3"
+        except ImportError:
+            pass
+        click.echo(f"OK — Tier {tier} install working.")
+        if tier == "1":
+            click.echo("  Upgrade: pip install loomscan[fast]  (adds tree-sitter + Rust core)")
+        elif tier == "2":
+            click.echo("  Upgrade: pip install loomscan[fast]  (adds Rust core for 10-50x speedup)")
+        else:
+            click.echo("  All tiers active — you're getting maximum performance.")
+        sys.exit(0)
+
+
 @main.command("install-tools")
 @click.option("--force", is_flag=True, help="Reinstall even if already present")
 @click.option("--layer", "layers", multiple=True, help="Only install tools for specific layers (e.g. --layer L0 --layer L0b)")
@@ -2530,100 +2710,6 @@ def feedback_stats(repo: str):
     for layer, s in sorted(stats.items()):
         click.echo(f"{layer:<20} {s['precision']:>10.0%} {s['recall']:>10.0%} "
                    f"{s['tp']:>5} {s['fp']:>5} {s['fn']:>5}")
-
-
-@main.command()
-@click.option("--repo", default=".")
-def doctor(repo: str):
-    """Check what tools and dependencies are available."""
-    import shutil
-    repo_root = Path(repo).resolve()
-
-    click.echo("LoomScan — Doctor")
-    click.echo("=" * 50)
-    click.echo(f"Repo: {repo_root}")
-    click.echo(f"Config: {find_config(repo_root)}")
-    click.echo()
-
-    click.echo("External tools:")
-    tools = [
-        ("git", "required"),
-        ("gitleaks", "L0 secrets"),
-        ("ruff", "L0 Python lint"),
-        ("semgrep", "L0 SAST (multi-language)"),
-        ("golangci-lint", "L0 Go lint"),
-        ("eslint", "L0 JS/TS lint"),
-        ("clang-tidy", "L0 C/C++ lint"),
-        ("opa", "L5 policy"),
-        ("kani", "L6 Rust verification"),
-        ("mutmut", "L2 mutation"),
-        ("atheris", "L4 Python fuzz"),
-        ("pip-audit", "L0b Python CVEs"),
-        ("osv-scanner", "L0b multi-lang CVEs"),
-        ("npm", "L0b Node CVEs"),
-        ("govulncheck", "L0b Go CVEs"),
-        ("cargo-audit", "L0b Rust CVEs"),
-        ("pip-licenses", "L0c license check"),
-        ("trivy", "L0b/L0e vulnerability + IaC scanner"),
-        ("checkov", "L0e IaC misconfiguration scanner"),
-        ("kics", "L0e IaC security scanner"),
-        ("jscpd", "L0d code duplication"),
-    ]
-    for tool, role in tools:
-        path = shutil.which(tool)
-        status = "✓" if path else "✗"
-        click.echo(f"  {status} {tool:<15} ({role})")
-
-    click.echo()
-    click.echo("Python packages:")
-    for pkg, role in [
-        ("hypothesis", "L1 property tests"),
-        ("rich", "TUI reports"),
-        ("tree_sitter", "diff slicing"),
-        ("tree_sitter_python", "Python parsing"),
-        ("yaml", "config loading"),
-        ("numpy", "FIS math"),
-    ]:
-        try:
-            __import__(pkg)
-            click.echo(f"  ✓ {pkg:<20} ({role})")
-        except ImportError:
-            click.echo(f"  ✗ {pkg:<20} ({role})")
-
-    click.echo()
-    click.echo("LoomScan-installed tools (in ~/.loomscan/bin/):")
-    installer.ensure_loomscan_on_path()
-    for spec_name, spec in installer.TOOLS.items():
-        path = shutil.which(spec.binary_name or spec_name)
-        status = "✓" if path else "✗"
-        click.echo(f"  {status} {spec_name:<15} ({spec.layer}) {spec.description}")
-    click.echo(f"  Run `loomscan install-tools` to install missing tools.")
-
-    click.echo()
-    click.echo("Language support (business logic detection):")
-    try:
-        from .multi_language_bl import get_capabilities, get_supported_languages
-        caps = get_capabilities()
-        for lang in caps["supported_languages"]:
-            detectors = caps["techniques_per_language"].get(lang, {})
-            active = sum(1 for v in detectors.values() if v)
-            total = len(detectors)
-            click.echo(f"  ✓ {lang:<15} {active}/{total} BL detectors active")
-        if caps["tree_sitter_available"]:
-            click.echo(f"  Tree-sitter: available ({len(caps['tree_sitter_languages'])} languages)")
-        else:
-            click.echo(f"  Tree-sitter: not installed (Python-only mode — install tree-sitter for multi-language)")
-            click.echo(f"               pip install tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-go tree-sitter-java tree-sitter-c tree-sitter-cpp")
-    except Exception:
-        click.echo("  (multi-language BL module not available)")
-
-    click.echo()
-    config = STCAConfig.from_file(find_config(repo_root))
-    click.echo(f"LLM enabled: {config.llm.get('enabled')}")
-    if config.llm.get("enabled"):
-        llm = LLMClient(endpoint=config.llm.get("endpoint", "http://localhost:11434"),
-                        model=config.llm.get("model", "qwen3-coder-1.5b"))
-        click.echo(f"LLM available: {'yes' if llm.is_available() else 'no (Ollama not running?)'}")
 
 
 @main.command()

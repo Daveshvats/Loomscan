@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loomscan"
-version = "5.7.0"
+version = "5.9.0"
 description = "Static + Test + Constraint Analysis — an offline, deterministic-first bug detection pipeline with a type-2 fuzzy aggregation brain"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -25,11 +25,46 @@ classifiers = [
     "Environment :: Console",
 ]
 
+# ============================================================================
+# v5.8: 3-tier installation model
+# ============================================================================
+#
+# Tier 1 (default): pip install loomscan
+#   → Pure Python, works on Linux/macOS/Windows, no compilation
+#   → All 2,095 YAML rules fire (via Python re fallback)
+#   → No tree-sitter (CPG/def-use chains degraded but functional)
+#   → No Rust core (10-50x slower than [fast] but correct)
+#
+# Tier 2: pip install loomscan[full]
+#   → Adds tree-sitter grammars for deep multi-language analysis
+#   → Enables CPG def-use chains, metamorphic testing, full taint tracking
+#
+# Tier 3: pip install loomscan[fast]
+#   → Adds Rust regex core (loomscan-regex) for 10-50x faster YAML scanning
+#   → All Tier 2 features included
+#
+# Specialized extras (for specific features):
+#   pip install loomscan[llm]       → LLM-verify via Ollama
+#   pip install loomscan[fuzz]      → Python fuzzing (L4)
+#   pip install loomscan[mutation]  → Mutation testing (L2)
+#   pip install loomscan[semgrep]   → Full YAML rule support (pattern-inside, metavariables)
+#
+# Dev: pip install loomscan[dev]    → pytest, mypy, build, twine
+
 dependencies = [
+    # Tier 1 core — pure Python, always required
     "click>=8.1",
     "rich>=13.0",
     "pyyaml>=6.0",
     "jsonschema>=4.0",
+    "numpy>=1.24",
+    "scikit-fuzzy>=0.5",
+]
+
+[project.optional-dependencies]
+# Tier 2: Full analysis (tree-sitter for CPG/def-use chains)
+# All these have pre-built wheels on Linux/macOS/Windows — no compilation needed.
+full = [
     "tree-sitter>=0.21",
     "tree-sitter-python>=0.21",
     "tree-sitter-javascript>=0.21",
@@ -39,25 +74,43 @@ dependencies = [
     "tree-sitter-cpp>=0.21",
     "tree-sitter-typescript>=0.21",
     "tree-sitter-rust>=0.21",
-    "numpy>=1.24",
-    "scikit-fuzzy>=0.5",
+    "hypothesis>=6.100",      # property-based testing (L1)
+    "pip-audit>=2.7",         # supply chain CVE checks (L0b)
 ]
 
-[project.optional-dependencies]
-llm = ["requests>=2.28"]           # for Ollama client (LLM-verify)
-fuzz = ["atheris>=2.1"]            # Python fuzzing (L4)
-property = ["hypothesis>=6.100"]   # Property-based testing (L1)
-mutation = ["mutmut>=3.0"]         # L2 mutation testing
-supply-chain = ["pip-audit>=2.7"]  # L0b Python CVEs
-re2 = ["google-re2>=0.3"]          # ReDoS protection (linear-time regex)
-semgrep = ["semgrep>=1.50"]        # Full YAML rule support (pattern-inside, metavariables)
-all-tools = [
-    "hypothesis>=6.100",
-    "mutmut>=3.0",
-    "pip-audit>=2.7",
-    "google-re2>=0.3",
+# Tier 3: Performance (Rust core for 10-50x faster YAML scanning)
+# loomscan-regex has pre-built binary wheels — no Rust compiler needed.
+fast = [
+    "loomscan-regex>=0.1.0",
+    "loomscan[full]",         # fast implies full
 ]
-dev = ["pytest>=7.0", "pytest-cov>=4.0", "hypothesis>=6.100", "mypy>=1.8", "build>=1.0", "twine>=4.0"]
+
+# Specialized feature extras (optional, for specific use cases)
+llm = ["requests>=2.28"]            # for Ollama client (LLM-verify)
+fuzz = ["atheris>=2.1"]             # Python fuzzing (L4)
+mutation = ["mutmut>=3.0"]          # L2 mutation testing
+semgrep = ["semgrep>=1.50"]         # Full YAML rule support (pattern-inside, metavariables)
+re2 = ["google-re2>=0.3"]           # ReDoS protection (linear-time regex, alternative to Rust core)
+
+# All optional tools (everything)
+all-tools = [
+    "loomscan[full]",
+    "loomscan[fast]",
+    "loomscan[llm]",
+    "loomscan[fuzz]",
+    "loomscan[mutation]",
+    "loomscan[semgrep]",
+]
+
+# Development
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "hypothesis>=6.100",
+    "mypy>=1.8",
+    "build>=1.0",
+    "twine>=4.0",
+]
 
 [project.scripts]
 loomscan = "loomscan.cli:main"
@@ -72,6 +125,9 @@ include = ["loomscan*"]
 
 [tool.setuptools.package-data]
 "loomscan.rules" = ["packs/*.yml", "policies/*.rego"]
+# v5.9: Include mascot image assets (optimized GIF + PNG frames)
+# Total size: ~243KB (GIF 112KB + 24 PNG frames 131KB)
+"loomscan.tui" = ["assets/*.gif", "assets/frames/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

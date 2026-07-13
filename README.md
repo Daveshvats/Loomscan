@@ -1,26 +1,74 @@
 # LoomScan — Static + Test + Constraint Analysis
 
-> **v5.7** — A deterministic-first, type-2 fuzzy aggregated bug detection pipeline with **2,095 rules across 40 packs covering 24 languages**, **107 auto-fix patterns**, **275 secret detection patterns**, **10 unique differentiators**, and **78+ CLI commands**. Free, offline, and production-ready. Native YAML rule engine (no semgrep dependency), multi-language CPG def-use chains, incremental CPG caching, SARIF Pro tier with threadFlow, **animated TUI mascot + progress bar (Loomy the spider)**, and an **optional Rust regex core** for 10-50× faster pattern matching.
+> **v5.9** — A deterministic-first, type-2 fuzzy aggregated bug detection pipeline with **2,095 rules across 40 packs covering 24 languages**, **107 auto-fix patterns**, **275 secret detection patterns**, **10 unique differentiators**, and **80+ CLI commands**. Free, offline, and production-ready. Native YAML rule engine (no semgrep dependency), multi-language CPG def-use chains, incremental CPG caching, SARIF Pro tier with threadFlow, **premium animated TUI mascot (real pixel-art spider via Kitty/iTerm2 inline-image protocols, with ASCII fallback) + progress bar**, **optional Rust regex core** for 10-50× faster pattern matching, and a **3-tier install model** (`pip install loomscan` / `[full]` / `[fast]`).
 
 ## Quick Start
 
 ```bash
-# Install (from PyPI when published, or from source):
+# 3-tier install model — pick the tier that fits your needs:
+
+# Tier 1: Basic (pure Python, works everywhere, no compilation)
 pip install loomscan
-# Or from source:
-pip install -e .
+
+# Tier 2: Full analysis (adds tree-sitter for CPG/def-use chains)
+pip install loomscan[full]
+
+# Tier 3: Performance (adds Rust core for 10-50x faster scanning)
+pip install loomscan[fast]
+
+# Verify your install (shows which tier is active):
+loomscan doctor
 
 # One-command quickstart (creates config, runs scan, shows summary):
 loomscan quickstart /path/to/your/code
 
 # Or step by step:
 loomscan init                    # Create .loomscan.yaml config
-loomscan check --full            # Scan the full repo
+loomscan check --full            # Scan the full repo (with Loomy the spider mascot!)
+loomscan check --full --no-tui   # CI mode (no animation)
 loomscan check --full --summary  # Compact grouped output
 loomscan gate --full --preset strict  # Quality gate (SonarQube-style)
 loomscan fix --apply             # Apply auto-fixes
 loomscan dashboard --repo . --open   # Generate HTML dashboard + open in browser
 ```
+
+## What's New in v5.9
+
+Loomy gets a premium graphics upgrade, and the doctor gets smarter.
+
+| Change | What it does |
+|--------|--------------|
+| **Premium mascot via inline-image protocols** | On Kitty, iTerm2, WezTerm, VS Code, and Ghostty terminals, Loomy is now rendered as **real pixel-art PNG frames** (24-frame animation, anti-aliased, 200×200) using the Kitty graphics protocol or iTerm2 inline-image protocol. No more blocky ASCII — it's a real animated spider. Falls back to ASCII art on terminals without image support. |
+| **Terminal auto-detection** | `loomscan/tui/image_render.py` auto-detects which protocol your terminal supports (Kitty / iTerm2 / Sixel / ASCII) via `$TERM`, `$TERM_PROGRAM`, `$LC_TERMINAL` env vars. No configuration needed — it just works. |
+| **Doctor shows mascot renderer** | `loomscan doctor` now reports which terminal protocol is active and how many animation frames are loaded, so you can verify the premium mascot is working. |
+| **Doctor skfuzzy fix** | Fixed the cosmetic bug where `scikit-fuzzy` showed as `[FAIL]` even when installed — the doctor now checks the correct import name (`skfuzzy`) and shows the pip package name (`scikit-fuzzy`) in suggestions. |
+| **Spider GIF optimized** | Original 4.7MB / 120-frame GIF → 112KB optimized GIF + 131KB of 24 PNG frames (243KB total assets). Ships in the pip package via `[tool.setuptools.package-data]`. |
+
+```bash
+# On a supporting terminal (Kitty/iTerm2/WezTerm/VS Code/Ghostty):
+loomscan check --full
+# → Loomy appears as a real animated pixel-art spider 🕷️
+
+# On a plain terminal (Linux console, CI log):
+loomscan check --full
+# → Loomy falls back to ASCII spider (still animated, 8-frame weaving cycle)
+
+# Check which renderer is active:
+loomscan doctor
+# → "TUI mascot: [IMAGE] Terminal protocol: kitty — Loomy renders as real pixel art!"
+```
+
+## What's New in v5.8
+
+The mascot is now a real spider, the install is now 3-tier, and there's a `doctor` command.
+
+| Change | What it does |
+|--------|--------------|
+| **Loomy redesigned as a real spider** | The mascot is now clearly a SPIDER — 8 articulated legs, abdomen + cephalothorax, spinneret, fangs. An 8-frame weaving cycle shows a web growing from 2 anchor strands → full orb web with radial spokes + sticky capture spiral. The spider's eyes change from `-_-` (focused) to `^ ^` (happy) when the web is complete. |
+| **3-tier install model** | `pip install loomscan` (Tier 1, pure Python) / `pip install loomscan[full]` (Tier 2, +tree-sitter) / `pip install loomscan[fast]` (Tier 3, +Rust core). All dependencies have pre-built wheels — no compilation needed on any platform. |
+| **`loomscan doctor` command** | Health check that shows install tier, Rust core status, tree-sitter availability, rule count, and external tools. Exit code 0/1/2 indicates health. Run after install to verify everything works. |
+| **Rust wheel CI workflow** | `.github/workflows/build-rust-wheels.yml` builds pre-built binary wheels for Linux x86_64/aarch64, macOS Intel/ARM, and Windows x86_64. Users get `pip install loomscan[fast]` with zero compilation. |
+| **`tree-sitter` moved to `[full]`** | v5.7 required tree-sitter as a hard dependency. v5.8 makes it optional (`pip install loomscan[full]`). Tier 1 install is now pure Python and works on any platform without compilation. |
 
 ## What's New in v5.7
 

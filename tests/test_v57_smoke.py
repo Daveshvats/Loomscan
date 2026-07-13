@@ -29,25 +29,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # ============================================================================
 
 def test_version_bumped_to_57():
-    """v5.7: __version__ must be 5.7.0."""
+    """v5.7+: __version__ must be >= 5.7.0 (v5.8+ also passes)."""
     import loomscan
-    assert loomscan.__version__ == "5.7.0", f"Expected 5.7.0, got {loomscan.__version__}"
+    v = loomscan.__version__
+    major, minor, *_ = (int(x) for x in v.split('.'))
+    assert (major, minor) >= (5, 7), f"Expected >= 5.7.0, got {v}"
 
 
 def test_pyproject_version_matches():
-    """v5.7: pyproject.toml version must match __version__."""
+    """v5.7+: pyproject.toml version must match __version__ (>= 5.7.0)."""
+    import loomscan
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     content = pyproject.read_text()
-    assert 'version = "5.7.0"' in content, "pyproject.toml version not bumped to 5.7.0"
+    assert f'version = "{loomscan.__version__}"' in content, (
+        f"pyproject.toml version doesn't match __version__ ({loomscan.__version__})"
+    )
 
 
-def test_readme_header_says_v57():
-    """v5.7: README header should say v5.7 (was stuck on v5.4)."""
+def test_readme_header_says_v57_or_later():
+    """v5.7+: README header should say v5.7 or later (was stuck on v5.4)."""
     readme = Path(__file__).resolve().parent.parent / "README.md"
     content = readme.read_text()
-    # Must contain v5.7 in the first 10 lines (the > quote)
+    # Must contain v5.7+ in the first 10 lines (the > quote)
     first_lines = "\n".join(content.split("\n")[:10])
-    assert "v5.7" in first_lines, f"README header doesn't mention v5.7: {first_lines[:200]}"
+    # Accept v5.7, v5.8, v5.9, v6.0, etc.
+    import re
+    match = re.search(r'v(\d+)\.(\d+)', first_lines)
+    assert match, f"README header doesn't mention a version: {first_lines[:200]}"
+    major, minor = int(match.group(1)), int(match.group(2))
+    assert (major, minor) >= (5, 7), f"README version {major}.{minor} < 5.7"
 
 
 def test_readme_mentions_tui_and_mascot():

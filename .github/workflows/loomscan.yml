@@ -1,0 +1,62 @@
+name: LoomScan
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master]
+
+jobs:
+  loomscan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install LoomScan
+        run: pip install --user .
+      - name: Run LoomScan on PR diff
+        if: github.event_name == 'pull_request'
+        run: |
+          loomscan check --sarif --output loomscan.sarif --strictness 5 || true
+      - name: Run LoomScan on full repo (push)
+        if: github.event_name == 'push'
+        run: |
+          loomscan check --sarif --output loomscan.sarif --full --strictness 5 || true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: loomscan.sarif
+      - name: Fail on critical only
+        if: always()
+        run: |
+          if [ ! -f loomscan.sarif ]; then
+            echo "No SARIF file generated — LoomScan may have crashed"
+            exit 1
+          fi
+          python3 -c "
+          import json
+          with open('loomscan.sarif') as f:
+              data = json.load(f)
+          critical_count = 0
+          for run in data.get('runs', []):
+              for result in run.get('results', []):
+                  props = result.get('properties', {})
+                  sev = (props.get('severity') or props.get('fis_severity') or '').lower()
+                  if sev == 'critical':
+                      critical_count += 1
+                      print(f'CRITICAL: {result.get(\"ruleId\", \"unknown\")}')
+          if critical_count > 0:
+              print(f'LoomScan: {critical_count} critical finding(s) — failing build')
+              exit(1)
+          else:
+              print(f'LoomScan: no critical findings (SARIF uploaded)')
+          "

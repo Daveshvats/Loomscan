@@ -1,8 +1,11 @@
 """LoomScan TUI — progress bars, animated mascot, and stage indicators.
 
-v5.7 introduces an animated ASCII spider mascot ("Loomy") plus Rich-powered
+v5.7 introduced an animated ASCII spider mascot ("Loomy") plus Rich-powered
 progress bars so users can see exactly which layer is running and how far
 along the pipeline is. This eliminates the "is it stuck?" problem.
+
+v5.9 upgraded the mascot to use real inline-image graphics (Kitty/iTerm2
+protocols) on supporting terminals, with ASCII art fallback.
 
 Public API:
     from loomscan.tui import ScanProgress, Mascot
@@ -17,5 +20,7 @@ Public API:
 """
 from .progress import ScanProgress, Stage  # noqa: F401
 from .mascot import Mascot, get_global_mascot  # noqa: F401
+from .image_render import ImageMascot, detect_terminal_protocol, is_image_supported  # noqa: F401
 
-__all__ = ["ScanProgress", "Stage", "Mascot", "get_global_mascot"]
+__all__ = ["ScanProgress", "Stage", "Mascot", "get_global_mascot",
+           "ImageMascot", "detect_terminal_protocol", "is_image_supported"]
