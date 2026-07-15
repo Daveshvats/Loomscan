@@ -60,8 +60,8 @@ from .llm.prm import PRMScorer
 from .feedback.stats import StatsTracker
 from .cache import ResultCache
 from .suppressions import filter_suppressed
-from .taint_cross_file import track_taint_for_files, track_taint_cross_file
-from .cpg import build_cpg_for_repo, build_cpg_for_repo_multi
+from .taint_cross_file import track_taint_cross_file
+from .cpg import build_cpg_for_repo_multi
 from .cpg_queries import (query_unsanitized_taint_flows, query_unused_variables,
                            query_dangerous_patterns_in_auth, query_function_complexity,
                            query_def_use_chains, query_cross_function_taint)
@@ -85,7 +85,7 @@ from .models import Category
 from .version_vuln_checks import scan_version_vuln_checks
 from .contracts import extract_all_contracts, check_preconditions_at_call_sites
 from .flawfinder_db import scan_repo_dangerous_functions
-from .malicious_patterns import scan_repo_malicious_patterns, scan_malicious_patterns
+from .malicious_patterns import scan_malicious_patterns
 from .pii_detection import scan_repo_pii, scan_pii
 from .root_cause import find_root_causes, rca_stats
 from .impact_analysis import ImpactAnalyzer
@@ -94,6 +94,39 @@ from .doc_audit import audit_repo
 from .html_scanner import scan_html_config
 from .js_cpg import JavaScriptCPG, scan_js_taint_flows
 from .js_pattern_scanner import scan_repo_js_patterns
+
+
+# v5.12: Mapping of taint sink types to CWE IDs.
+# Previously used `f"CWE-{flow.sink_type[:2]}"` which produced invalid CWEs
+# like "CWE-co" (code_injection) and "CWE-sq" (sql_injection).
+# Now uses a proper mapping to real CWE IDs.
+_SINK_TYPE_CWE_MAP = {
+    "sql_injection": "CWE-89",
+    "code_injection": "CWE-94",
+    "command_injection": "CWE-78",
+    "xss": "CWE-79",
+    "deserialization": "CWE-502",
+    "path_traversal": "CWE-22",
+    "open_redirect": "CWE-601",
+    "ssrf": "CWE-918",
+    "xxe": "CWE-611",
+    "ldap_injection": "CWE-90",
+    "xpath_injection": "CWE-643",
+    "log_injection": "CWE-117",
+    "header_injection": "CWE-113",
+    "eval": "CWE-95",
+    "exec": "CWE-78",
+    "system": "CWE-78",
+    "popen": "CWE-78",
+    "subprocess": "CWE-78",
+    "os_system": "CWE-78",
+    "render_template_string": "CWE-79",
+    "innerhtml": "CWE-79",
+    "document_write": "CWE-79",
+    "pickle_loads": "CWE-502",
+    "yaml_load": "CWE-502",
+    "marshal_load": "CWE-502",
+}
 
 
 class Orchestrator:
@@ -403,6 +436,7 @@ class Orchestrator:
         t0 = time.perf_counter()
 
         # Discover ALL source files and create synthetic diff hunks
+        # v5.18: Also respect config.workspace_exclude (from --exclude flag or .loomscan.yaml)
         skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules",
                      ".loomscan-cache", ".loomscan-reports", ".loomscan-fixes", "build",
                      "dist", ".pytest_cache", "coverage"}
@@ -411,11 +445,27 @@ class Orchestrator:
                              ".tf", ".yaml", ".yml", ".json", ".env",
                              ".dockerfile", ".sh", ".cfg", ".ini", ".conf"}
 
+        # v5.18: Get custom excludes from config (set by --exclude flag or .loomscan.yaml)
+        custom_excludes = getattr(self.config, 'workspace_exclude', [])
+
         all_hunks: List[DiffHunk] = []
         for p in self.repo_root.rglob("*"):
             if not p.is_file():
                 continue
             if any(part in skip_dirs for part in p.parts):
+                continue
+            # v5.18: Check custom exclude patterns
+            rel_path = str(p.relative_to(self.repo_root))
+            excluded = False
+            for exc in custom_excludes:
+                # Convert glob pattern to fnmatch
+                import fnmatch
+                # Handle ** patterns
+                pattern = exc.replace("**/", "")
+                if fnmatch.fnmatch(rel_path, f"*{pattern}*") or fnmatch.fnmatch(rel_path, pattern):
+                    excluded = True
+                    break
+            if excluded:
                 continue
             if p.suffix.lower() in source_extensions or p.name.lower().startswith("dockerfile"):
                 rel = str(p.relative_to(self.repo_root))
@@ -448,10 +498,14 @@ class Orchestrator:
         enabled_layers.append(L0fCommitRisk())
 
         # v5.7: progress — stage 1 of ~12 (parallel layers)
+        # v5.10: Adaptive worker count — use min(8, cpu_count) for better
+        # performance on multi-core machines (macOS Apple Silicon has 8+ cores)
+        import os as _os
+        _max_workers = min(8, _os.cpu_count() or 4)
         self._stage_start("Layers", f"Running {len(enabled_layers)} layers on {len(all_hunks)} files",
                           animate_mascot=False)
         n_layer_findings_before = len(result.findings)
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=_max_workers) as executor:
             future_to_layer = {
                 executor.submit(self._run_layer_cached, layer, all_hunks): layer
                 for layer in enabled_layers
@@ -763,10 +817,13 @@ class Orchestrator:
 
         # Step 3: run layers in parallel (with caching)
         # v5.7: progress — stage 1 (parallel layers)
+        # v5.10: Adaptive worker count for better multi-core performance
+        import os as _os
+        _max_workers = min(8, _os.cpu_count() or 4)
         self._stage_start("Layers", f"Running {len(enabled_layers)} layers on {len(result.diff_hunks)} hunks",
                           animate_mascot=False)
         n_before = len(result.findings)
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=_max_workers) as executor:
             future_to_layer = {
                 executor.submit(self._run_layer_cached, layer, result.diff_hunks): layer
                 for layer in enabled_layers
@@ -1000,6 +1057,14 @@ class Orchestrator:
         # Step 7: persist reports
         # v4.24: _tag_engines already called above (before precision pipeline)
         result.scanner_health = list(self._scanner_health)
+
+        # v6.2: Enrich findings with CVE references
+        try:
+            from .cve_database import enrich_findings
+            enrich_findings(result.findings)
+        except Exception:
+            pass  # Don't fail the scan if CVE enrichment fails
+
         self._save_reports(result)
 
         result.layer_timings["__total__"] = time.perf_counter() - t0
@@ -1542,6 +1607,79 @@ class Orchestrator:
         except Exception as e:
             self._scanner_error("v2_analyzers", e)
 
+        # v5.21: Runtime error scanner — catches Java OOM, UUID errors, 500s in log files
+        try:
+            from .runtime_error_scanner import scan_repo_runtime_errors
+            for f in scan_repo_runtime_errors(self.repo_root, max_files=_max_files(500)):
+                findings.append(f)
+        except Exception as e:
+            self._scanner_error("runtime_errors", e)
+
+        # v6.0: TOCTOU race condition detector
+        try:
+            from .toctou_detector import scan_repo_toctou
+            for f in scan_repo_toctou(self.repo_root, max_files=_max_files(500)):
+                findings.append(f)
+        except Exception as e:
+            self._scanner_error("toctou", e)
+
+        # v6.0: Domain-aware business logic mining
+        try:
+            from .business_logic_miner import scan_repo_business_logic
+            for f in scan_repo_business_logic(self.repo_root, max_files=_max_files(500)):
+                findings.append(f)
+        except Exception as e:
+            self._scanner_error("business_logic", e)
+
+        # v6.0: Field-sensitive taint tracker (IDOR + mass assignment + privilege escalation)
+        try:
+            from .field_taint_tracker import scan_repo_field_taint
+            for f in scan_repo_field_taint(self.repo_root, max_files=_max_files(500)):
+                findings.append(f)
+        except Exception as e:
+            self._scanner_error("field_taint", e)
+
+        # v6.1: Deep dataflow analysis (JS/Java source→sink taint tracking)
+        # This was dead code since v4.x — now wired in. Catches bugs regex CANNOT.
+        try:
+            from .deep_dataflow import analyze_deep_repo
+            sev_map = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
+                       "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
+            for df in analyze_deep_repo(self.repo_root, max_files=_max_files(200)):
+                findings.append(Finding(
+                    layer=LayerID.L0_FAST,
+                    rule_id=f"L0.deepflow.{df.rule_id}",
+                    message=df.description,
+                    file=df.file, start_line=df.line,
+                    severity=sev_map.get(df.severity, Severity.MEDIUM),
+                    confidence=0.8,
+                    blast_radius=BlastRadius.MODULE,
+                    exploitability=0.7,
+                    category=Category.SECURITY,
+                    cwe=df.cwe,
+                    fix_suggestion=df.path,
+                    raw={"source": df.source, "sink": df.sink,
+                         "sanitized": df.sanitized, "language": df.language},
+                ))
+        except Exception as e:
+            self._scanner_error("deep_dataflow", e)
+
+        # v7.0: Integer overflow detector (closes the 20th gap — 20/20 detection)
+        try:
+            from .integer_overflow_detector import scan_repo_integer_overflow
+            for f in scan_repo_integer_overflow(self.repo_root, max_files=_max_files(500)):
+                findings.append(f)
+        except Exception as e:
+            self._scanner_error("integer_overflow", e)
+
+        # v7.1: Dynamic CVE checker — detect deps, query OSV API, check reachability
+        try:
+            from .dynamic_cve_checker import scan_dynamic_cves
+            for f in scan_dynamic_cves(self.repo_root):
+                findings.append(f)
+        except Exception as e:
+            self._scanner_error("dynamic_cve", e)
+
         return findings
 
     def _run_cross_file_taint_tracking_with_pysa(self, hunks: List[DiffHunk]) -> List[Finding]:
@@ -1969,7 +2107,7 @@ class Orchestrator:
                     blast_radius=BlastRadius.FUNCTION if not flow.interprocedural else BlastRadius.MODULE,
                     exploitability=0.7,
                     category=Category.SECURITY,
-                    cwe=f"CWE-{flow.sink_type[:2]}" if flow.sink_type else "",
+                    cwe=_SINK_TYPE_CWE_MAP.get(flow.sink_type, "") if flow.sink_type else "",
                     fix_suggestion=f"Sanitize input before passing to {flow.sink_function}",
                     raw={"source_param": flow.source_param,
                          "sink_function": flow.sink_function,

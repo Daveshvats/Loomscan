@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import yaml
 from pathlib import Path
@@ -53,22 +54,52 @@ _RUST_ENGINE_CHECKED = False
 def _get_rust_engine():
     """Return a cached Rust RegexEngine instance, or None if unavailable.
 
-    The Rust engine is loaded once per process. Subsequent calls reuse the
-    same engine instance (rules are added per-scan via add_rules()).
+    v5.12: Respects the LOOMSCAN_ENGINE env var:
+      - "rust"   → force Rust core (returns engine if available, else None → Python fallback)
+      - "python" → force Python re (always returns None)
+      - "semgrep"→ force semgrep (returns None here; semgrep path handled in l0_fast.py)
+      - "all" → run BOTH Rust + semgrep (Rust loads here, semgrep runs in l0_fast.py)
+      - "auto" or unset → auto-detect (Rust if available, else Python)
     """
     global _RUST_ENGINE, _RUST_ENGINE_CHECKED
     if _RUST_ENGINE_CHECKED:
         return _RUST_ENGINE
     _RUST_ENGINE_CHECKED = True
+
+    # v5.12: Check user's engine preference
+    engine_pref = os.environ.get("LOOMSCAN_ENGINE", "auto").lower()
+
+    if engine_pref == "python":
+        _logger.info("v5.12: Engine preference=python — using Python re (no Rust core)")
+        return None
+    if engine_pref == "semgrep":
+        _logger.info("v5.12: Engine preference=semgrep — using semgrep (no Rust core)")
+        return None
+
+    # v5.22: "all" mode — load Rust core (semgrep runs separately in l0_fast.py)
+    # Both engines run, results are consolidated by the orchestrator's dedup logic
+    if engine_pref == "all":
+        _logger.info("v5.22: Engine preference=all — loading Rust core (semgrep will also run)")
+
+    # For "rust", "all", and "auto", try to load the Rust core
     try:
         from loomscan_regex import is_available, RegexEngine  # type: ignore
         if is_available():
             _RUST_ENGINE = RegexEngine()
-            _logger.info("v5.7: Rust regex core detected — using native engine for 10-50x faster YAML rule scanning")
+            if engine_pref == "rust":
+                _logger.info("v5.12: Engine preference=rust — Rust core ACTIVE")
+            else:
+                _logger.info("v5.7: Rust regex core detected — using native engine for 10-50x faster YAML rule scanning")
         else:
-            _logger.debug("v5.7: loomscan_regex.is_available() returned False — falling back to Python re")
+            if engine_pref == "rust":
+                _logger.warning("v5.12: Engine preference=rust but loomscan-regex not available — falling back to Python re")
+            else:
+                _logger.debug("v5.7: loomscan_regex.is_available() returned False — falling back to Python re")
     except ImportError:
-        _logger.debug("v5.7: loomscan_regex not installed — using Python re fallback (pip install loomscan-regex for 10-50x speedup)")
+        if engine_pref == "rust":
+            _logger.warning("v5.12: Engine preference=rust but loomscan-regex not installed — falling back to Python re (pip install loomscan-regex)")
+        else:
+            _logger.debug("v5.7: loomscan_regex not installed — using Python re fallback (pip install loomscan-regex for 10-50x speedup)")
     except Exception as e:
         _logger.warning(f"v5.7: Failed to load Rust regex core: {e}")
     return _RUST_ENGINE

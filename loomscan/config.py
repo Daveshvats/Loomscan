@@ -52,14 +52,31 @@ class STCAConfig:
     workspaces: List[str] = field(default_factory=list)
 
     # v4.37: Exclude paths from monorepo scanning
+    # v5.19: Expanded with common dev dependencies, lock files, minified files
     workspace_exclude: List[str] = field(default_factory=lambda: [
+        # Directories
         "**/node_modules/**", "**/.git/**", "**/build/**", "**/dist/**",
         "**/__pycache__/**", "**/.venv/**", "**/venv/**",
+        # v5.19: Common dev dependencies
+        "**/vendor/**", "**/third_party/**", "**/third-party/**",
+        "**/bower_components/**", "**/.tox/**", "**/.eggs/**",
+        "**/site-packages/**", "**/.mypy_cache/**", "**/.ruff_cache/**",
+        "**/.pytest_cache/**", "**/coverage/**", "**/.nyc_output/**",
+        # Lock files & generated files
+        "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml",
+        "**/Pipfile.lock", "**/poetry.lock", "**/Cargo.lock",
+        "**/go.sum", "**/composer.lock", "**/Gemfile.lock",
+        # Minified files
+        "**/*.min.js", "**/*.min.css", "**/*.min.map",
+        # Generated/source maps
+        "**/*.generated.*", "**/*.map",
+        # IDE & tool config
+        "**/.idea/**", "**/.vscode/**", "**/.vs/**",
     ])
 
     # v4.43: Strictness level (1-9, PHPStan-inspired) — stored as top-level key
     # (was stored in layers dict as __strictness__, causing crash on reload)
-    strictness_level: int = 5
+    strictness_level: int = 7  # v5.19: Changed from 5 to 7 to reduce noise
 
     # LLM tie-breaker
     llm: Dict[str, object] = field(default_factory=lambda: {
@@ -129,7 +146,7 @@ class STCAConfig:
         cfg.workspaces = raw.get("workspaces", cfg.workspaces)
         cfg.workspace_exclude = raw.get("workspace_exclude", cfg.workspace_exclude)
         # v4.43: Strictness level (top-level key, not in layers)
-        cfg.strictness_level = raw.get("strictness_level", 5)
+        cfg.strictness_level = raw.get("strictness_level", 7)
         # Also clean up any stale __strictness__ from layers (v4.42 and earlier)
         if "__strictness__" in cfg.layers:
             del cfg.layers["__strictness__"]
@@ -167,6 +184,43 @@ class STCAConfig:
             # v4.14: Serialize brain config so it round-trips through YAML
             "brain": self.brain,
         }
+
+    def load_loomscanignore(self, repo_root: Path) -> None:
+        """v5.19: Load .loomscanignore file (same format as .gitignore).
+
+        Each line is a pattern. Lines starting with # are comments.
+        Patterns are converted to glob format and added to workspace_exclude.
+
+        Example .loomscanignore:
+            # Exclude test directories
+            tests/
+            test/
+            spec/
+            # Exclude generated code
+            *.generated.go
+            *.pb.go
+            # Exclude specific files
+            config/production.json
+        """
+        ignore_file = repo_root / ".loomscanignore"
+        if not ignore_file.exists():
+            return
+
+        for line in ignore_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Convert .gitignore-style pattern to glob
+            if line.endswith("/"):
+                line = line.rstrip("/")
+            if "/" not in line and not line.startswith("*"):
+                pattern = f"**/{line}/**"
+            elif line.startswith("*"):
+                pattern = f"**/{line}"
+            else:
+                pattern = f"**/{line}"
+            if pattern not in self.workspace_exclude:
+                self.workspace_exclude.append(pattern)
 
     def resolve_workspaces(self, repo_root: Path) -> List[Path]:
         """v4.37: Resolve workspace globs to actual paths.

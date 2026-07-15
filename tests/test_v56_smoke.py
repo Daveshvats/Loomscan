@@ -158,7 +158,7 @@ class TestVersionV56:
     def test_version_is_5_6(self):
         from loomscan import __version__
         major, minor = int(__version__.split(".")[0]), int(__version__.split(".")[1])
-        assert major >= 5 and minor >= 6, f"Expected >= 5.6.0, got {__version__}"
+        assert major >= 7 or (major == 5 and minor >= 6), f"Expected >= 5.6.0, got {__version__}"
 
     def test_pyproject_matches(self):
         from loomscan import __version__

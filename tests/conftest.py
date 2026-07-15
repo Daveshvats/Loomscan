@@ -34,20 +34,44 @@ _TS_KEYWORDS = ("typescript", "tsx", "ts_file", "ts_parse", "tree_sitter",
                 "typestate", "state_machine", "statemachine",
                 "detect_typestate", "detect_state_machine")
 
+# v5.12: TUI test keywords — these tests need textual installed
+_TUI_KEYWORDS = ("tui_app", "tui_screens", "tui_mascot",
+                 "welcome_screen", "config_screen", "scanning_screen",
+                 "results_screen", "settings_screen",
+                 "mascot_widget", "loomscan_app")
+
+try:
+    import textual  # noqa: F401
+    _HAS_TEXTUAL = True
+except ImportError:
+    _HAS_TEXTUAL = False
+
+
 def pytest_collection_modifyitems(items):
-    if not _MISSING:
-        return
+    # v4.29: Skip tree-sitter-dependent tests when grammars aren't available
     for item in items:
         test_name = item.nodeid.lower()
         test_file = str(item.fspath).lower()
-        should_skip = False
-        for kw in _TS_KEYWORDS:
-            if kw in test_name or kw in test_file:
-                should_skip = True
-                break
-        if should_skip:
-            item.add_marker(pytest.mark.skip(
-                reason=f"Missing tree-sitter grammars: {_MISSING}"))
+
+        # Tree-sitter skip
+        if _MISSING:
+            should_skip = False
+            for kw in _TS_KEYWORDS:
+                if kw in test_name or kw in test_file:
+                    should_skip = True
+                    break
+            if should_skip:
+                item.add_marker(pytest.mark.skip(
+                    reason=f"Missing tree-sitter grammars: {_MISSING}"))
+
+        # v5.12: Textual/TUI skip
+        if not _HAS_TEXTUAL:
+            for kw in _TUI_KEYWORDS:
+                if kw in test_name or kw in test_file:
+                    item.add_marker(pytest.mark.skip(
+                        reason="textual not installed (pip install loomscan[tui])"))
+                    break
+
 
 # v4.31: Validate all YAML packs parse — catches the v4.30 bug where 12/16 packs were broken
 def pytest_sessionstart(session):

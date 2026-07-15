@@ -207,12 +207,66 @@ class L0Fast(LayerBase):
         """Run semgrep with BOTH bundled LoomScan rule packs AND community rules.
 
         v5.2: Falls back to native YAML engine when semgrep is not installed.
-        The native engine applies regex-based rules using Python's re module.
+        v5.22: When LOOMSCAN_ENGINE=all, runs BOTH semgrep AND native/Rust engine,
+               then merges results with deduplication (no duplicate findings).
         """
         from ..rules import get_all_packs_for_files
         pack_paths = get_all_packs_for_files(list(files))
 
-        # Try semgrep first (supports all features: pattern-inside, metavariables, etc.)
+        import os as _os
+        engine_pref = _os.environ.get("LOOMSCAN_ENGINE", "auto").lower()
+
+        # v5.22: "all" mode — run semgrep + native/Rust, merge results
+        if engine_pref == "all":
+            import logging
+            _logger = logging.getLogger("loomscan.l0_fast")
+            _logger.info("v5.22: Engine=all — running both semgrep + native/Rust")
+
+            semgrep_findings = []
+            native_findings = []
+
+            # Run semgrep if available
+            if self.is_tool_available("semgrep"):
+                semgrep_findings = self._run_semgrep_binary(repo_root, files, pack_paths)
+                _logger.info(f"v5.22: Semgrep found {len(semgrep_findings)} findings")
+            else:
+                _logger.warning("v5.22: semgrep not installed — only native/Rust engine will run")
+
+            # Run native/Rust engine
+            native_findings = self._run_native_yaml_engine(repo_root, files, pack_paths)
+            _logger.info(f"v5.22: Native/Rust found {len(native_findings)} findings")
+
+            # Merge with dedup — dedup key = (rule_id_normalized, file, line)
+            seen = set()
+            merged = []
+            for f in semgrep_findings + native_findings:
+                # Normalize rule_id: strip "L0.semgrep:" and "L0.yaml:" prefixes for dedup
+                norm_rule = f.rule_id
+                if norm_rule.startswith("L0.semgrep:"):
+                    norm_rule = norm_rule[11:]
+                elif norm_rule.startswith("L0.yaml:"):
+                    norm_rule = norm_rule[8:]
+                dedup_key = (norm_rule, f.file, f.start_line)
+                if dedup_key not in seen:
+                    seen.add(dedup_key)
+                    merged.append(f)
+
+            _logger.info(f"v5.22: Consolidated {len(merged)} unique findings "
+                        f"(semgrep={len(semgrep_findings)}, native={len(native_findings)}, "
+                        f"dupes removed={len(semgrep_findings)+len(native_findings)-len(merged)})")
+            return merged
+
+        # v5.12: "semgrep" mode — force semgrep only
+        if engine_pref == "semgrep":
+            if self.is_tool_available("semgrep"):
+                return self._run_semgrep_binary(repo_root, files, pack_paths)
+            # Semgrep not installed — fall back to native
+            import logging
+            _logger = logging.getLogger("loomscan.l0_fast")
+            _logger.warning("v5.12: Engine=semgrep but semgrep not installed — falling back to native")
+            return self._run_native_yaml_engine(repo_root, files, pack_paths)
+
+        # Default: try semgrep first, fall back to native
         if self.is_tool_available("semgrep"):
             return self._run_semgrep_binary(repo_root, files, pack_paths)
 

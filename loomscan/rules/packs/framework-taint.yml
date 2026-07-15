@@ -599,3 +599,291 @@ rules:
   message: 'Session fixation: session ID from user input'
   metadata:
     cwe: CWE-384
+- id: java-jackson-empty-string-list
+  pattern: 'List<String>\s+\w+'
+  severity: medium
+  message: "Jackson List field — empty string from client will cause 500. Add @JsonSetter(nulls = Nulls.SKIP) or configure CoercionConfig."
+  metadata:
+    cwe: CWE-20
+- id: java-spring-missing-exception-handler
+  pattern: '@RestController'
+  severity: info
+  message: "Controller class — verify @ControllerAdvice with @ExceptionHandler exists to catch unhandled exceptions and prevent 500s."
+  metadata:
+    cwe: CWE-755
+
+# === v5.24: IDOR (Insecure Direct Object Reference) detection ===
+
+- id: java-idor-pathvariable-userid
+  pattern: '@PathVariable.*\b(user_?[Ii]d|userId|account_?[Ii]d|accountId|customer_?[Ii]d)\b'
+  severity: high
+  message: "IDOR risk: @PathVariable with user/account ID — verify authorization (user can only access their own data). Add @PreAuthorize with ownership check."
+  metadata:
+    cwe: CWE-639
+- id: java-idor-requestparam-userid
+  pattern: '@RequestParam.*\b(user_?[Ii]d|userId|account_?[Ii]d|accountId|customer_?[Ii]d)\b'
+  severity: high
+  message: "IDOR risk: @RequestParam with user/account ID — user may access other users' data. Add ownership authorization check."
+  metadata:
+    cwe: CWE-639
+- id: java-idor-findbyid-no-auth
+  pattern: 'findById\s*\(\s*\w+[Ii]d\w*\s*\)'
+  severity: high
+  message: "IDOR risk: findById with user-supplied ID — verify the caller owns this resource. Add authorization check."
+  metadata:
+    cwe: CWE-639
+- id: java-idor-getone-no-auth
+  pattern: 'getOne\s*\(\s*\w+\s*\)|getById\s*\(\s*\w+\s*\)'
+  severity: medium
+  message: "IDOR risk: getOne/getById with user-supplied ID — verify authorization before returning entity."
+  metadata:
+    cwe: CWE-639
+- id: py-idor-flask-route-id
+  pattern: '@app\.route.*<int:\w+_?[Ii]d>|@app\.route.*<\w+_?[Ii]d>'
+  severity: high
+  message: "IDOR risk: Flask route with ID parameter — verify the user owns this resource before returning data."
+  metadata:
+    cwe: CWE-639
+- id: py-idor-django-url-id
+  pattern: 'path\s*\(\s*[<].*int:\w+.*[>]'
+  severity: high
+  message: "IDOR risk: Django URL with ID parameter — verify object ownership in the view before returning data."
+  metadata:
+    cwe: CWE-639
+- id: js-idor-express-param-id
+  pattern: 'req\.params\.(id|userId|accountId|customerId)'
+  severity: high
+  message: "IDOR risk: Express route uses user-supplied ID — verify the requester owns this resource."
+  metadata:
+    cwe: CWE-639
+
+# === v5.24: Mass assignment detection ===
+
+- id: java-mass-assignment-beanutils
+  pattern: 'BeanUtils\.copyProperties\s*\(\s*(?:request|req|input|user|params|body|dto|form)'
+  severity: high
+  message: "Mass assignment: BeanUtils.copyProperties from user input — attacker can overwrite sensitive fields (role, isAdmin). Use DTO with explicit field mapping."
+  metadata:
+    cwe: CWE-915
+- id: java-mass-assignment-modelattribute
+  pattern: '@ModelAttribute\s+\w+\s+\w+'
+  severity: medium
+  message: "Mass assignment risk: @ModelAttribute binds all request params to object — attacker can set sensitive fields. Use @InitBinder to whitelist fields."
+  metadata:
+    cwe: CWE-915
+- id: py-mass-assignment-dict-update
+  pattern: '__dict__\.update\s*\(\s*(?:request|req|input|user|POST|form|data|body|json)'
+  severity: high
+  message: "Mass assignment: __dict__.update from user input — attacker can overwrite any attribute. Whitelist fields explicitly."
+  metadata:
+    cwe: CWE-915
+- id: py-mass-assignment-kwargs
+  pattern: '\*\*\s*(?:request|req|POST|form|data|body|json|kwargs)'
+  severity: medium
+  message: "Mass assignment risk: **kwargs from user input — may set sensitive fields. Validate allowed keys before unpacking."
+  metadata:
+    cwe: CWE-915
+- id: js-mass-assignment-object-assign
+  pattern: 'Object\.assign\s*\(\s*\w+\s*,\s*(?:req\.body|req\.params|ctx\.request\.body)'
+  severity: high
+  message: "Mass assignment: Object.assign from req.body — attacker can overwrite role/isAdmin. Use a DTO with explicit fields."
+  metadata:
+    cwe: CWE-915
+- id: js-mass-assignment-spread
+  pattern: '\{\s*\.\.\.\s*(?:req\.body|req\.params|ctx\.request\.body|request\.body)\s*\}'
+  severity: high
+  message: "Mass assignment: spread of req.body into object — attacker can inject any field. Whitelist properties."
+  metadata:
+    cwe: CWE-915
+
+# === v5.24: Missing rate limiting detection ===
+
+- id: java-missing-rate-limit-login
+  pattern: "@PostMapping\\s*\\(\\s*['']/(?:login|signin|register|signup|forgot|reset)['']"
+  severity: medium
+  message: "Missing rate limiting: authentication endpoint without rate limit. Add @RateLimiter or Spring Security brute-force protection."
+  metadata:
+    cwe: CWE-307
+- id: java-missing-rate-limit-api
+  pattern: "@RequestMapping\\s*\\(\\s*['']/(?:api|v\\d)/"
+  severity: info
+  message: "API endpoint — consider adding rate limiting (@RateLimiter) to prevent abuse and DoS."
+  metadata:
+    cwe: CWE-307
+- id: py-missing-rate-limit-login
+  pattern: "@app\\.route\\s*\\(\\s*['']/(?:login|signin|register|signup|forgot|reset)['']"
+  severity: medium
+  message: "Missing rate limiting: auth endpoint without rate limit. Add flask-limiter or slowapi decorator."
+  metadata:
+    cwe: CWE-307
+- id: js-missing-rate-limit-login
+  pattern: "app\\.(?:post|get)\\s*\\(\\s*['']/(?:login|signin|register|signup|forgot|reset)['']"
+  severity: medium
+  message: "Missing rate limiting: auth endpoint without rate limit. Add express-rate-limit middleware."
+  metadata:
+    cwe: CWE-307
+
+# === v5.24: Timing attack detection (non-constant-time comparison) ===
+
+- id: java-timing-attack-equals
+  pattern: '(?:password|token|secret|apiKey|api_key|hash|digest|hmac)\w*\s*\.(?:equals|equalsIgnoreCase)\s*\('
+  severity: high
+  message: "Timing attack: .equals() on secret — comparison is not constant-time. Use MessageDigest.isEqual() or Arrays.constantTimeEquals()."
+  metadata:
+    cwe: CWE-208
+- id: java-timing-attack-strcmp
+  pattern: '(?:password|token|secret|apiKey|api_key|hash)\w*\s*==\s*\w+'
+  severity: high
+  message: "Timing attack: == comparison on secret — not constant-time. Use MessageDigest.isEqual()."
+  metadata:
+    cwe: CWE-208
+- id: py-timing-attack-eq
+  pattern: '(?:password|token|secret|api_key|apiKey|hash|hmac)\w*\s*==\s*\w+'
+  severity: high
+  message: "Timing attack: == comparison on secret — not constant-time. Use hmac.compare_digest() or secrets.compare_digest()."
+  metadata:
+    cwe: CWE-208
+- id: py-timing-attack-checkpw
+  pattern: 'check_password_hash\s*\(\s*\w+\s*,\s*\w+\s*\)\s*(?!.*#.*safe)'
+  severity: info
+  message: "Password check — verify using constant-time comparison. werkzeug.security.check_password_hash is safe."
+  metadata:
+    cwe: CWE-208
+- id: js-timing-attack-eq
+  pattern: '(?:password|token|secret|apiKey|api_key|hash)\w*\s*(?:===|==)\s*\w+'
+  severity: high
+  message: "Timing attack: ==/=== comparison on secret — not constant-time. Use crypto.timingSafeEqual()."
+  metadata:
+    cwe: CWE-208
+
+# === v5.24: Integer overflow heuristic ===
+
+- id: java-integer-overflow-multiply
+  pattern: '\b(int|long)\s+\w+\s*=\s*\w+\s*\*\s*(?:qty|quantity|amount|price|count|total|sum|score)'
+  severity: medium
+  message: "Integer overflow risk: multiplication of quantity/price/amount — may overflow int range. Use BigInteger or check for overflow."
+  metadata:
+    cwe: CWE-190
+- id: java-integer-overflow-add
+  pattern: '\b(int|long)\s+\w+\s*=\s*\w+\s*\+\s*(?:qty|quantity|amount|price|count|total)'
+  severity: low
+  message: "Integer overflow risk: addition of quantity/price/amount — verify range checks before arithmetic."
+  metadata:
+    cwe: CWE-190
+- id: py-integer-overflow-multiply
+  pattern: '\w+\s*=\s*\w+\s*\*\s*(?:qty|quantity|amount|price|count|total|sum)'
+  severity: info
+  message: "Arithmetic on business values (qty/price/amount) — verify range validation before multiplication to prevent overflow."
+  metadata:
+    cwe: CWE-190
+- id: js-integer-overflow-multiply
+  pattern: '\w+\s*=\s*\w+\s*\*\s*(?:qty|quantity|amount|price|count|total)'
+  severity: info
+  message: "Arithmetic on business values — JavaScript numbers are floating point. Verify precision for financial calculations."
+  metadata:
+    cwe: CWE-190
+
+# === v6.1: Cloud metadata SSRF (Capital One breach pattern) ===
+
+- id: ssrf-cloud-metadata-aws
+  pattern: '169\.254\.169\.254'
+  severity: critical
+  message: "SSRF to AWS metadata endpoint (169.254.169.254) — can steal IAM credentials. Block this IP in egress rules."
+  metadata:
+    cwe: CWE-918
+- id: ssrf-cloud-metadata-gcp
+  pattern: 'metadata\.google\.internal'
+  severity: critical
+  message: "SSRF to GCP metadata endpoint — can steal service account tokens. Block metadata.google.internal in egress."
+  metadata:
+    cwe: CWE-918
+- id: ssrf-cloud-metadata-azure
+  pattern: '169\.254\.169\.254/metadata'
+  severity: critical
+  message: "SSRF to Azure metadata endpoint — can steal managed identity tokens. Block in egress rules."
+  metadata:
+    cwe: CWE-918
+
+# === v6.1: Spring4Shell (CVE-2022-22965) ===
+
+- id: java-spring4shell-classloader
+  pattern: 'getClassLoader\s*\(\s*\)|class\.module\.classLoader'
+  severity: critical
+  message: "Spring4Shell (CVE-2022-22965): ClassLoader access — RCE on Spring < 5.3.18. Upgrade Spring Framework immediately."
+  metadata:
+    cwe: CWE-94
+
+# === v7.0: Latest critical CVEs (2024-2025) ===
+
+- id: cve-2024-3094-xz-backdoor
+  pattern: 'liblzma|xz-utils|liblzma\.so'
+  severity: critical
+  message: "CVE-2024-3094: XZ Utils backdoor — if liblzma is present, verify it's not version 5.6.0/5.6.1 (sshd backdoor)."
+  metadata:
+    cwe: CWE-506
+- id: cve-2024-21626-runc
+  pattern: 'runc|containerd|docker.*runc'
+  severity: critical
+  message: "CVE-2024-21626: runc container escape — verify runc version >= 1.1.12."
+  metadata:
+    cwe: CWE-200
+- id: cve-2024-23897-jenkins
+  pattern: 'jenkins.*cli|jenkins-cli|Jenkins\.cli'
+  severity: critical
+  message: "CVE-2024-23897: Jenkins CLI arbitrary file read — verify Jenkins version >= 2.442/2.426.3."
+  metadata:
+    cwe: CWE-22
+- id: cve-2024-21887-ivanti
+  pattern: 'ivanti|connect-secure|pulse-secure'
+  severity: critical
+  message: "CVE-2024-21887: Ivanti Connect Secure command injection — verify patched."
+  metadata:
+    cwe: CWE-78
+- id: cve-2024-1706-connectwise
+  pattern: 'connectwise|screenconnect'
+  severity: critical
+  message: "CVE-2024-1706: ConnectWise ScreenConnect authentication bypass — verify patched."
+  metadata:
+    cwe: CWE-287
+- id: cve-2024-27198-teamcity
+  pattern: 'teamcity'
+  severity: critical
+  message: "CVE-2024-27198: JetBrains TeamCity authentication bypass — verify version >= 2023.11.4."
+  metadata:
+    cwe: CWE-287
+- id: cve-2024-6387-regresshock
+  pattern: 'sshd_config|OpenSSH|openssh-server'
+  severity: high
+  message: "CVE-2024-6387 (RegreSSHion): OpenSSH server race condition RCE — verify OpenSSH >= 9.8p1."
+  metadata:
+    cwe: CWE-367
+- id: cve-2024-37032-ollama
+  pattern: 'ollama'
+  severity: critical
+  message: "CVE-2024-37032: Ollama path traversal — verify Ollama version >= 0.1.34."
+  metadata:
+    cwe: CWE-22
+- id: cve-2024-9474-pan-os
+  pattern: 'pan-os|palo.*alto|globalprotect'
+  severity: critical
+  message: "CVE-2024-9474: PAN-OS privilege escalation in GlobalProtect — verify patched."
+  metadata:
+    cwe: CWE-269
+- id: cve-2024-1086-linux-kernel
+  pattern: 'nf_tables|nf_tables_net|netfilter'
+  severity: critical
+  message: "CVE-2024-1086: Linux kernel nf_tables local privilege escalation — verify kernel patched."
+  metadata:
+    cwe: CWE-416
+- id: cve-2025-1974-kubernetes-ingress
+  pattern: 'ingress-nginx|kubernetes.*ingress'
+  severity: critical
+  message: "CVE-2025-1974: Kubernetes ingress-nginx config injection RCE — verify ingress-nginx >= 1.11.4/1.12.1."
+  metadata:
+    cwe: CWE-94
+- id: cve-2025-24872-ldap
+  pattern: 'ldap.*search|LdapTemplate.*search'
+  severity: high
+  message: "CVE-2025-24872: LDAP injection risk — verify input sanitization on LDAP search filters."
+  metadata:
+    cwe: CWE-90

@@ -18,6 +18,8 @@ from .feedback.stats import StatsTracker
 from .feedback.rule_capture import RuleCapture
 from .llm.client import LLMClient
 from .report.tui import render_tui
+from rich.console import Console
+from rich.align import Align
 from . import installer
 from .rules import (list_builtin_packs, list_external_packs,
                     get_builtin_pack_path, pull_external_pack)
@@ -32,14 +34,50 @@ except ImportError:
     _HAS_V2 = False
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(__version__)
-def main():
+@click.pass_context
+def main(ctx):
     """LoomScan — Static + Test + Constraint Analysis pipeline.
 
     A deterministic-first, type-2 fuzzy aggregated bug detection pipeline
     that runs on a git diff and works on any laptop, offline.
+
+    \b
+    Quick start:
+      loomscan check --full          Scan the full repo
+      loomscan check --full --engine rust   Use Rust core (10-50x faster)
+      loomscan check --full --engine all    Run BOTH Rust + Semgrep
+      loomscan check --full --exclude tests,vendor   Exclude folders
+      loomscan doctor                Check system health
+      loomscan quickstart            First-time setup + scan
+
+    \b
+    When you run 'loomscan check --full', ALL 18 analysis modules run:
+      L0 Fast (SAST), Secrets, Taint, CPG, Metamorphic, Code Quality,
+      Deadcode, Nullness, RCA, Impact, Duplicates, Doc Audit,
+      Supply Chain, Flawfinder, Malicious, PII, Contracts, Architecture
+
+    Features that need semgrep installed (pip install semgrep):
+      pattern-inside, metavariable-regex, metavariable-pattern,
+      focus-metavariable, pattern-not-inside, pattern-not-regex.
+      Without semgrep, these advanced rules are skipped (regex rules still fire).
     """
+    # v5.17: CLI is the default — no TUI auto-launch.
+    # When no subcommand is given, show help with the logo.
+    if ctx.invoked_subcommand is None:
+        import sys as _sys
+        # Show the LOOMSCAN logo + help
+        try:
+            from .cli_display import _get_logo_text
+            console = Console()
+            console.print(Align.center(_get_logo_text(__version__)))
+            console.print()
+        except Exception:
+            pass
+        click.echo(ctx.get_help())
+        click.echo("\n💡 Run 'loomscan check --full' to scan your code")
+        _sys.exit(0)
 
 
 # Register v2 commands
@@ -139,15 +177,39 @@ def quickstart(repo: str, open_dashboard: bool):
     click.echo(f"\n  Full docs: loomscan --help  or  see GUIDE.md")
 
     # v5.1: Auto-generate and open dashboard if --open-dashboard
+    # v5.10: Fix macOS — webbrowser.open() with file:// URLs is unreliable on
+    # macOS. Use platform-specific openers: 'open' on macOS, 'xdg-open' on
+    # Linux, 'start' on Windows. Fall back to webbrowser if those fail.
     if open_dashboard:
         click.echo(f"\nGenerating dashboard...")
         try:
             from .report.dashboard import generate_dashboard
-            import webbrowser
+            import subprocess
+            import platform as _platform
             dash_path = repo_root / "loomscan-dashboard.html"
             generate_dashboard(repo_root, dash_path, findings_json=result.to_dict())
             click.echo(f"Dashboard written to {dash_path}")
-            webbrowser.open(f"file://{dash_path.resolve()}")
+            # v5.10: Platform-specific browser opening
+            abs_path = str(dash_path.resolve())
+            opened = False
+            try:
+                system = _platform.system()
+                if system == "Darwin":
+                    # macOS: 'open' command is the reliable way
+                    subprocess.Popen(['open', abs_path])
+                    opened = True
+                elif system == "Linux":
+                    subprocess.Popen(['xdg-open', abs_path])
+                    opened = True
+                elif system == "Windows":
+                    subprocess.Popen(['cmd', '/c', 'start', '', abs_path], shell=False)
+                    opened = True
+            except Exception:
+                pass
+            if not opened:
+                # Fallback to webbrowser (may not work on macOS but worth trying)
+                import webbrowser
+                webbrowser.open(f"file://{dash_path.resolve()}")
             click.echo("Opened in browser.")
         except Exception as e:
             click.echo(f"Dashboard generation failed: {e}", err=True)
@@ -178,8 +240,9 @@ def doctor_cmd(repo: str):
     click.echo()
 
     # --- Tier 1: Core dependencies ---
-    # v5.9: Map package names (in pyproject.toml) to their actual import names.
-    # scikit-fuzzy installs as 'skfuzzy' module, pyyaml as 'yaml', etc.
+    # v5.10: Removed scikit-fuzzy — it was never actually imported by LoomScan
+    # (the IT2-FIS is implemented natively in loomscan/brain/). Its scipy
+    # transitive dependency was breaking macOS installs.
     click.echo("Tier 1 — Core (always required):")
     core_deps = [
         ("click", "click"),
@@ -187,7 +250,6 @@ def doctor_cmd(repo: str):
         ("pyyaml", "yaml"),
         ("jsonschema", "jsonschema"),
         ("numpy", "numpy"),
-        ("scikit-fuzzy", "skfuzzy"),
     ]
     tier1_ok = True
     for pkg_name, import_name in core_deps:
@@ -785,7 +847,7 @@ def _generate_sbom(repo_root: Path, fmt: str) -> str:
 @click.option("--staged", is_flag=True, help="Diff staged changes (use this in pre-commit hook)")
 @click.option("--json", "as_json", is_flag=True, help="Output JSON instead of TUI")
 @click.option("--quiet", is_flag=True, help="Only print the final decision")
-@click.option("--strictness", type=int, help="Strictness level 1-9 (PHPStan-inspired)")
+@click.option("--strictness", type=int, default=7, help="Strictness level 1-9 (default: 7, PHPStan-inspired)")
 @click.option("--baseline", is_flag=True, help="Only flag NEW issues (detekt-inspired)")
 @click.option("--full", is_flag=True, help="Full-repo scan (not just diff) — scans ALL source files")
 @click.option("--strict-scanners", is_flag=True,
@@ -806,11 +868,24 @@ def _generate_sbom(repo_root: Path, fmt: str) -> str:
               help="Enable DEBUG-level logging on loomscan namespace")
 @click.option("--no-tui", is_flag=True, default=False,
               help="Disable animated TUI mascot and progress bar (for CI logs)")
+@click.option("--engine", type=click.Choice(["auto", "rust", "semgrep", "python", "all"]),
+              default="auto",
+              help="v5.18: Choose YAML rule engine: auto (detect best), "
+                   "rust (10-50x faster, needs loomscan-regex), "
+                   "semgrep (full pattern support, needs semgrep), "
+                   "python (always works, slowest), "
+                   "all (run BOTH rust + semgrep, consolidate findings, no duplicates). "
+                   "Default: auto")
+@click.option("--exclude", "excludes", multiple=True,
+              help="v5.18: Exclude folders/files from scan. Accepts comma-separated: "
+                   "--exclude tests,vendor,*.min.js  OR  multiple flags: "
+                   "--exclude tests --exclude vendor. "
+                   "Also reads .loomscanignore file (same format as .gitignore).")
 def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
           strictness: int, baseline: bool, full: bool,
           strict_scanners: bool, sarif: bool, output_path: Optional[str],
           max_files: int, uncertain: bool, summary: bool, verbose: bool,
-          no_tui: bool):
+          no_tui: bool, engine: str, excludes: tuple):
     """Run the pipeline on a git diff (or full repo with --full)."""
     import logging as _logging
     import os as _os
@@ -837,30 +912,242 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
 
     config = STCAConfig.from_file(find_config(repo_root))
 
-    # v5.7: TUI mascot + progress bar.
-    # Disabled when --no-tui, --quiet, --json, --sarif, or non-TTY stdout
-    # (CI logs / piping to file). The progress tracker is a context manager
-    # so it always cleans up the mascot animation thread on exit.
-    from .tui import ScanProgress
-    tui_enabled = not (no_tui or quiet or as_json or sarif or summary)
-    progress = ScanProgress(
-        total_stages=7 if full else 5,
-        show_mascot=tui_enabled,
-        enabled=tui_enabled,
-    )
+    # v5.18: Engine selection — user picks which YAML engine to use
+    # v5.22: "all" mode runs both Rust + semgrep and consolidates results
+    if engine and engine not in ("auto", "all"):
+        _os.environ["LOOMSCAN_ENGINE"] = engine
+        if not quiet:
+            engine_labels = {"rust": "Rust core (10-50x faster)",
+                            "semgrep": "Semgrep (full pattern support)",
+                            "python": "Python re (always works)"}
+            click.echo(f"🚀 Engine: {engine_labels.get(engine, engine)}", err=True)
+    elif engine == "all":
+        _os.environ["LOOMSCAN_ENGINE"] = "all"
+        if not quiet:
+            click.echo("🚀 Engine: ALL (Rust + Semgrep — consolidated, no duplicates)", err=True)
+    else:
+        _os.environ.pop("LOOMSCAN_ENGINE", None)
+
+    # v5.18: Exclude patterns — merge CLI --exclude with config workspace_exclude
+    # v5.19: Support comma-separated values + .loomscanignore file
+    # v5.20: Auto-generate .loomscanignore on first scan
+    config.load_loomscanignore(repo_root)  # v5.19: Load .loomscanignore
+
+    # v5.20: Auto-generate .loomscanignore if it doesn't exist
+    loomscanignore_path = repo_root / ".loomscanignore"
+    if not loomscanignore_path.exists() and not quiet:
+        try:
+            from .loomscanignore import generate_loomscanignore
+            generated = generate_loomscanignore(repo_root)
+            click.echo(f"📝 Auto-generated {generated} (language-aware excludes)", err=True)
+            # Reload to pick up the new patterns
+            config.load_loomscanignore(repo_root)
+        except Exception:
+            pass  # Don't fail the scan if auto-generation fails
+
+    if excludes:
+        # v5.19: Support comma-separated values: --exclude tests,vendor,docs
+        cli_excludes = []
+        for exc in excludes:
+            # Split on commas for multi-value support
+            for part in exc.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                # Convert to glob format
+                if part.startswith("**"):
+                    cli_excludes.append(part)
+                elif "/" in part or part.startswith("*"):
+                    cli_excludes.append(f"**/{part}")
+                else:
+                    cli_excludes.append(f"**/{part}/**")
+        # Merge with existing config excludes (CLI takes precedence, no duplicates)
+        existing = set(config.workspace_exclude)
+        for exc in cli_excludes:
+            if exc not in existing:
+                config.workspace_exclude.append(exc)
+                existing.add(exc)
+        if not quiet:
+            click.echo(f"🚫 Excluding: {', '.join(excludes)}", err=True)
+
+    # v5.17: Rich CLI display replaces TUI mascot + progress bar.
+    # Shows logo, two-column layout (progress + project info), findings count.
+    # Disabled when --quiet, --json, --sarif, --summary, or non-TTY stdout.
+    display_enabled = not (quiet or as_json or sarif or summary) and sys.stdout.isatty()
+
+    if display_enabled:
+        from .cli_display import CLIDisplay
+        cmd_str = f"loomscan check {'--full' if full else ''}"
+        if strictness:
+            cmd_str += f" --strictness {strictness}"
+        if engine and engine != "auto":
+            cmd_str += f" --engine {engine}"
+        if excludes:
+            cmd_str += " " + " ".join(f"--exclude {e}" for e in excludes)
+        display = CLIDisplay(
+            console=Console(),
+            repo_path=str(repo_root),
+            version=__version__,
+            command=cmd_str,
+            engine=engine or "auto",
+            excludes=list(excludes) if excludes else [],
+        )
+        display.start()
+    else:
+        display = None
 
     try:
-        progress.__enter__()
+        # Use ScanProgress internally (no TUI, just for stage tracking)
+        from .tui import ScanProgress
+        progress = ScanProgress(total_stages=7 if full else 5, enabled=False)
+
         orch = Orchestrator(repo_root, config, strictness=strictness,
                             use_baseline=baseline, progress=progress)
         orch._strict_scanners = strict_scanners
+
+        # v5.17: Start a polling thread to update the CLI display
+        if display:
+            def _poll_display():
+                last_stage = 0
+                while not getattr(display, '_scan_complete', False):
+                    if progress.completed_stages > last_stage:
+                        last_stage = progress.completed_stages
+                        pct = int((last_stage / (7 if full else 5)) * 100)
+                        stage_names = [s.name for s in progress.stages]
+                        stage_name = stage_names[-1] if stage_names else "Working..."
+                        display.update_stage(stage_name, last_stage, 7 if full else 5)
+                        display.set_progress(pct)
+                        # Update findings count
+                        total_findings = sum(s.findings_count for s in progress.stages)
+                        # Approximate severity split (we'll get exact counts at the end)
+                        display.update_findings(
+                            critical=total_findings // 4,
+                            high=total_findings // 4,
+                            medium=total_findings // 4,
+                            low=total_findings // 4,
+                        )
+                    import time as _time
+                    _time.sleep(0.25)
+
+            import threading as _threading
+            poll_thread = _threading.Thread(target=_poll_display, daemon=True)
+            poll_thread.start()
+
+            # Update project info — show all 18 analysis modules
+            display.update_modules([
+                "L0 Fast", "Secrets", "Taint", "CPG", "Metamorphic",
+                "Code Quality", "Deadcode", "Nullness", "RCA",
+                "Impact", "Duplicates", "Doc Audit", "Supply Chain",
+                "Flawfinder", "Malicious", "PII", "Contracts", "Architecture"
+            ], total=18)
+
+            # Count files
+            skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules",
+                         ".loomscan-cache", ".loomscan-reports", "build", "dist"}
+            source_exts = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java",
+                           ".c", ".cpp", ".cc", ".h", ".hpp", ".rs"}
+            total_files = 0
+            excluded_files = 0
+            excluded_folders = 0
+            for p in repo_root.rglob("*"):
+                if not p.is_file():
+                    if any(part in skip_dirs for part in p.parts):
+                        excluded_folders += 1
+                    continue
+                if any(part in skip_dirs for part in p.parts):
+                    excluded_files += 1
+                elif p.suffix.lower() in source_exts:
+                    total_files += 1
+            display.update_files(0, total_files)
+            display.update_excludes(excluded_files, excluded_folders)
 
         if full:
             result = orch.run_full()
         else:
             result = orch.run(base=base, staged=staged)
-    finally:
-        progress.__exit__(None, None, None)
+
+        # v5.17: Finalize display with exact findings + report paths
+        if display:
+            display._scan_complete = True
+            # Get exact severity counts
+            from .models import Severity
+            sev_counts = {Severity.CRITICAL: 0, Severity.HIGH: 0,
+                         Severity.MEDIUM: 0, Severity.LOW: 0, Severity.INFO: 0}
+            for f in result.findings:
+                if f.severity in sev_counts:
+                    sev_counts[f.severity] += 1
+            display.update_findings(
+                critical=sev_counts[Severity.CRITICAL],
+                high=sev_counts[Severity.HIGH],
+                medium=sev_counts[Severity.MEDIUM],
+                low=sev_counts[Severity.LOW],
+                info=sev_counts[Severity.INFO],
+            )
+            display.update_files(total_files, total_files)
+
+            # Generate reports
+            from .report.sarif import save_sarif
+            from .report.html import save_html
+            report_dir = repo_root / ".loomscan-reports"
+            report_dir.mkdir(parents=True, exist_ok=True)
+            html_path = report_dir / "report.html"
+            sarif_path = report_dir / "result.sarif"
+            json_path = report_dir / "result.json"
+            save_sarif(result, repo_root, sarif_path)
+
+            # v5.22: Pass scan_info to HTML report for overview section
+            engine_labels = {"auto": "Auto-detect", "rust": "Rust core",
+                            "semgrep": "Semgrep", "python": "Python re",
+                            "all": "ALL (Rust + Semgrep)"}
+            scan_info = {
+                "command": cmd_str,
+                "engine": engine_labels.get(engine or "auto", "Auto"),
+                "strictness": strictness or 7,
+                "repo": str(repo_root),
+                "total_files": total_files,
+                "excluded_files": excluded_files,
+                "excluded_folders": excluded_folders,
+                "excludes": list(excludes) if excludes else [],
+                "modules": ["L0 Fast", "Secrets", "Taint", "CPG", "Metamorphic",
+                           "Code Quality", "Deadcode", "Nullness", "RCA",
+                           "Impact", "Duplicates", "Doc Audit", "Supply Chain",
+                           "Flawfinder", "Malicious", "PII", "Contracts", "Architecture"],
+            }
+            save_html(result, repo_root, html_path, scan_info=scan_info)
+            result.to_json(json_path)
+
+            display.finish(html_path, sarif_path, json_path)
+
+            # Auto-open HTML in browser
+            import platform as _platform
+            import subprocess as _subprocess
+            try:
+                system = _platform.system()
+                abs_path = str(html_path.resolve())
+                if system == "Darwin":
+                    _subprocess.Popen(["open", abs_path])
+                elif system == "Linux":
+                    _subprocess.Popen(["xdg-open", abs_path])
+                elif system == "Windows":
+                    _subprocess.Popen(["cmd", "/c", "start", "", abs_path], shell=False)
+            except Exception:
+                pass
+
+            # Exit with appropriate code
+            from .models import Decision
+            if strict_scanners and result.has_scanner_errors:
+                sys.exit(3)
+            sys.exit({
+                Decision.PASS: 0,
+                Decision.WARN: 0,
+                Decision.UNCERTAIN: 0,
+                Decision.BLOCK: 1,
+            }.get(result.final_decision, 0))
+
+    except Exception as e:
+        if display:
+            display.stop()
+        raise
 
     # v4.32: --uncertain flag surfaces only 30-70% confidence findings
     if uncertain:
@@ -2784,6 +3071,67 @@ def lsp(repo: str, stdio: bool):
     except Exception as e:
         click.echo(f"LSP server error: {e}", err=True)
         sys.exit(1)
+
+
+@main.command("merge-review")
+@click.option("--base", required=True, help="Base branch (e.g., main, origin/main)")
+@click.option("--head", default="HEAD", help="Head branch (default: current HEAD)")
+@click.option("--repo", default=".", help="Repository root")
+@click.option("--strictness", default=7, type=int, help="Strictness level 1-9 (default: 7)")
+@click.option("--json", "as_json", is_flag=True, help="Output JSON (for CI/CD)")
+def merge_review(base: str, head: str, repo: str, strictness: int, as_json: bool):
+    """v6.2: Pre-merge analysis — see what happens if this branch is merged.
+
+    Shows:
+      - NEW findings introduced by this branch
+      - RESOLVED findings (fixed by this branch)
+      - Blast radius of the changes
+      - Merge recommendation (approve / request_changes / block)
+
+    Exit codes for CI/CD:
+      0 = APPROVE (no critical/high findings)
+      1 = BLOCK (critical findings introduced)
+      2 = REQUEST_CHANGES (high findings need review)
+
+    \b
+    Examples:
+      loomscan merge-review --base main
+      loomscan merge-review --base origin/main --head feature-branch
+      loomscan merge-review --base main --json  # for CI/CD
+    """
+    from .merge_review import run_merge_review, format_merge_review
+
+    repo_root = Path(repo).resolve()
+    if not (repo_root / ".git").exists():
+        click.echo(f"Not a git repo: {repo_root}", err=True)
+        sys.exit(2)
+
+    click.echo(f"Running merge review: {head} → {base}...", err=True)
+    result = run_merge_review(repo_root, base, head, strictness)
+
+    if as_json:
+        output = {
+            "recommendation": result.recommendation,
+            "summary": result.summary,
+            "base_branch": result.base_branch,
+            "head_branch": result.head_branch,
+            "changed_files": result.changed_files,
+            "new_findings_count": len(result.new_findings),
+            "resolved_count": len(result.resolved_findings),
+            "existing_count": result.existing_findings_count,
+            "scan_time": result.scan_time,
+            "blast_radius": {
+                "total": result.blast_radius.get("total_blast_radius", 0),
+            },
+            "findings": [f.to_dict() for f in result.new_findings],
+        }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        click.echo(format_merge_review(result))
+
+    # Exit codes for CI/CD
+    exit_map = {"approve": 0, "block": 1, "request_changes": 2}
+    sys.exit(exit_map.get(result.recommendation, 0))
 
 
 if __name__ == "__main__":

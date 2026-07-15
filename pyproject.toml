@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loomscan"
-version = "5.9.6"
+version = "7.1.0"
 description = "Static + Test + Constraint Analysis — an offline, deterministic-first bug detection pipeline with a type-2 fuzzy aggregation brain"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "LoomScan Project" }]
 keywords = ["static-analysis", "security", "sast", "fuzzing", "mutation-testing", "fuzzy-logic", "developer-tools", "code-quality"]
@@ -16,10 +16,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Security",
     "Environment :: Console",
@@ -53,17 +51,22 @@ classifiers = [
 
 dependencies = [
     # Tier 1 core — pure Python, always required
+    # v5.10: Removed scikit-fuzzy — LoomScan's IT2-FIS is implemented natively
+    # in loomscan/brain/ (pure Python, no scipy dependency). scikit-fuzzy was
+    # listed but never imported, and its scipy transitive dep broke macOS installs.
+    # v5.17: Added pyfiglet for ASCII art logo
     "click>=8.1",
     "rich>=13.0",
     "pyyaml>=6.0",
     "jsonschema>=4.0",
     "numpy>=1.24",
-    "scikit-fuzzy>=0.5",
+    "pyfiglet>=1.0",
 ]
 
 [project.optional-dependencies]
-# Tier 2: Full analysis (tree-sitter for CPG/def-use chains)
-# All these have pre-built wheels on Linux/macOS/Windows — no compilation needed.
+# v5.12: [full] now includes EVERYTHING — tree-sitter + Rust core + TUI
+# This is the "install once, get everything" tier.
+# Users who want a lighter install can use the base install or individual extras.
 full = [
     "tree-sitter>=0.21",
     "tree-sitter-python>=0.21",
@@ -76,14 +79,20 @@ full = [
     "tree-sitter-rust>=0.21",
     "hypothesis>=6.100",      # property-based testing (L1)
     "pip-audit>=2.7",         # supply chain CVE checks (L0b)
+    # v5.12: [full] now includes the Rust core + TUI
+    # v5.16: Added OpenTUI (native Zig core) as primary TUI engine
+    "loomscan-regex>=0.1.0",  # Rust regex engine (10-50x faster)
+    "opentui>=0.1.2",         # OpenTUI Python port (native Zig TUI)
+    "yoga-python>=0.1.4",     # Layout engine for opentui
+    "textual>=0.50",          # Fallback TUI
+    "textual-image>=0.13",    # Image rendering for mascot
+    "textual-fspicker>=1.0",  # File picker for TUI
+    "pillow>=10.0",           # Image processing
 ]
 
-# Tier 3: Performance (Rust core for 10-50x faster YAML scanning)
-# loomscan-regex has pre-built binary wheels — no Rust compiler needed.
-fast = [
-    "loomscan-regex>=0.1.0",
-    "loomscan[full]",         # fast implies full
-]
+# v5.12: [fast] is now an alias for [full] (which already includes Rust core)
+# Kept for backward compat with users who run pip install loomscan[fast]
+fast = ["loomscan[full]"]
 
 # Specialized feature extras (optional, for specific use cases)
 llm = ["requests>=2.28"]            # for Ollama client (LLM-verify)
@@ -92,14 +101,36 @@ mutation = ["mutmut>=3.0"]          # L2 mutation testing
 semgrep = ["semgrep>=1.50"]         # Full YAML rule support (pattern-inside, metavariables)
 re2 = ["google-re2>=0.3"]           # ReDoS protection (linear-time regex, alternative to Rust core)
 
-# All optional tools (everything)
-all-tools = [
+# v5.10: Premium TUI — term-image for real inline graphics in supporting terminals
+# (Kitty, iTerm2, WezTerm, VS Code, Ghostty). Falls back to Unicode art.
+premium = ["term-image>=0.7"]
+
+# v5.11: Full TUI app — Textual-powered interactive mode
+# v5.16: Now uses OpenTUI (native Zig core) as primary, Textual as fallback
+# Run `loomscan` with no args to launch the full-screen TUI
+# (Also included in [full] above)
+tui = [
+    "opentui>=0.1.2",        # OpenTUI Python port (native Zig core)
+    "yoga-python>=0.1.4",    # Layout engine for opentui
+    "textual>=0.50",         # Fallback if opentui not available
+    "textual-image>=0.13",
+    "textual-fspicker>=1.0",
+    "pillow>=10.0",
+]
+
+# v5.12: [all] is the canonical "everything" extra. [all-tools] is kept as alias.
+all = [
     "loomscan[full]",
-    "loomscan[fast]",
     "loomscan[llm]",
     "loomscan[fuzz]",
     "loomscan[mutation]",
     "loomscan[semgrep]",
+    "loomscan[premium]",
+]
+
+# All optional tools (everything) — alias for [all]
+all-tools = [
+    "loomscan[all]",
 ]
 
 # Development
@@ -126,8 +157,9 @@ include = ["loomscan*"]
 [tool.setuptools.package-data]
 "loomscan.rules" = ["packs/*.yml", "policies/*.rego"]
 # v5.9: Include mascot image assets (optimized GIF + PNG frames)
-# Total size: ~243KB (GIF 112KB + 24 PNG frames 131KB)
-"loomscan.tui" = ["assets/*.gif", "assets/frames/*.png"]
+# v5.11: Also include ASCII art spider
+# Total size: ~250KB (GIF 112KB + 24 PNG frames 131KB + ASCII art 6KB)
+"loomscan.tui" = ["assets/*.gif", "assets/*.txt", "assets/frames/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -232,3 +232,24 @@ rules:
   severity: INFO
   metadata:
     cwe: CWE-396
+
+# === v5.24: ReDoS detection ===
+
+- id: py-redos-nested-quantifiers
+  pattern: '\(.*[+*].*\)[+*]'
+  severity: high
+  message: "ReDoS: nested quantifiers (a+)+ — catastrophic backtracking. Use atomic groups or possessive quantifiers."
+  metadata:
+    cwe: CWE-1333
+- id: py-redos-overlapping-alternation
+  pattern: '\(\w+\+\|\w+\*\)'
+  severity: high
+  message: "ReDoS: overlapping alternation (a+|a*) — both branches match same input. Rewrite to avoid overlap."
+  metadata:
+    cwe: CWE-1333
+- id: py-redos-nested-quantifier-group
+  pattern: '\(\.\*[+*]\)'
+  severity: medium
+  message: "ReDoS: (.*)+ or (.*)* pattern — can cause exponential backtracking on long input."
+  metadata:
+    cwe: CWE-1333

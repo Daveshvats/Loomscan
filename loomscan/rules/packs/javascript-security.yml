@@ -224,3 +224,15 @@ rules:
   severity: INFO
   metadata:
     cwe: CWE-798
+- id: js-redos-nested-quantifiers
+  pattern: 'new\s+RegExp\s*\(\s*[''"].*\(.*[+*].*\)[+*]'
+  severity: high
+  message: "ReDoS: RegExp with nested quantifiers (a+)+ — catastrophic backtracking."
+  metadata:
+    cwe: CWE-1333
+- id: js-redos-regex-literal-nested
+  pattern: '/.*\(.*[+*].*\)[+*]/'
+  severity: high
+  message: "ReDoS: Regex literal with nested quantifiers — catastrophic backtracking."
+  metadata:
+    cwe: CWE-1333

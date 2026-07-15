@@ -173,7 +173,7 @@ class L0fCommitRisk(LayerBase):
                 rule_id="L0f.late_night",
                 message=f"Late-night commit ({hour:02d}:00) — research shows 2x bug risk",
                 file="<commit>", start_line=0,
-                severity=Severity.LOW, confidence=0.5,
+                severity=Severity.INFO, confidence=0.5,  # v5.21: Was LOW, changed to INFO
                 blast_radius=BlastRadius.FUNCTION, exploitability=0.0,
                 cwe="CWE-1058",
                 fix_suggestion="Review again in the morning with fresh eyes",

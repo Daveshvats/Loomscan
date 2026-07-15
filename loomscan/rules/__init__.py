@@ -17,7 +17,7 @@ BUILTIN_PACKS = {
     "python-security": {
         "path": "packs/python-security.yml",
         "language": "python",
-        "rules": 26,
+        "rules": 29,
         "description": "OWASP Top 10 + Python-specific antipatterns",
     },
     "python-frameworks": {
@@ -29,7 +29,7 @@ BUILTIN_PACKS = {
     "javascript-security": {
         "path": "packs/javascript-security.yml",
         "language": "javascript,typescript",
-        "rules": 23,
+        "rules": 25,
         "description": "XSS, prototype pollution, SSRF, SQL injection",
     },
     "javascript-frameworks": {
@@ -256,8 +256,20 @@ BUILTIN_PACKS = {
     "java-deep": {
         "path": "packs/java-deep.yml",
         "language": "java",
-        "rules": 158,
+        "rules": 167,
         "description": "Java/Spring deep: Spring (auth, redirect, forward, Thymeleaf, JdbcTemplate, @Query, CORS, CSRF, actuator, H2 console, SpEL, @ModelAttribute, multipart, JWT, password encoders, session), general Java (Runtime.exec, ProcessBuilder, ScriptEngine, Class.forName, SQL, ObjectInputStream, XML XXE, MessageDigest, Cipher DES/ECB/RC4, SSL TrustManager, System.exit, Thread.sleep, JNDI injection, Log4Shell, Jackson default typing, Velocity/FreeMarker SSTI, File path traversal, ReDoS, BeanUtils mass assignment, Struts OGNL, gRPC plaintext, AWS S3/RDS/EC2)",
+    },
+    "java-production-incidents": {
+        "path": "packs/java-production-incidents.yml",
+        "language": "java",
+        "rules": 101,
+        "description": "v5.23: Java production-incident prevention — 30 categories",
+    },
+    "ai-security": {
+        "path": "packs/ai-security.yml",
+        "language": "multi",
+        "rules": 12,
+        "description": "v6.1: AI/LLM security — prompt injection, unrestricted tool use, API key exposure, response validation",
     },
     "no-secrets-in-logs": {
         "path": "../policies/no_secrets_in_logs.rego",
@@ -269,7 +281,7 @@ BUILTIN_PACKS = {
     "framework-taint": {
         "path": "packs/framework-taint.yml",
         "language": "multi",
-        "rules": 100,
+        "rules": 144,
         "description": "Framework taint: Flask (render_template_string, mark_safe, redirect, send_file), Django (mark_safe, raw SQL, .extra, redirect), Express (res.send/render/redirect/sendFile, CORS, session, CSRF), Spring (Thymeleaf utext, redirect, JdbcTemplate, @Query, SpEL, CORS, CSRF, actuator), React (dangerouslySetInnerHTML, innerHTML, eval, document.write, localStorage), SSRF (requests/urllib/http/fetch/axios/cURL), access control (missing auth decorators, JWT bypass, session fixation)",
     },
 }

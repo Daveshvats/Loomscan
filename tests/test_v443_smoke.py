@@ -110,7 +110,7 @@ class TestStrictnessLevelFix:
         from loomscan.config import STCAConfig
         cfg = STCAConfig.default()
         assert hasattr(cfg, "strictness_level")
-        assert cfg.strictness_level == 5  # default
+        assert cfg.strictness_level == 7  # v5.19+: default changed from 5 to 7
 
     def test_config_cleans_stale_strictness(self, tmp_path):
         """from_dict should remove stale __strictness__ from layers."""
@@ -173,9 +173,9 @@ class TestDocsUpToDate:
         content = (PROJECT_ROOT / "README.md").read_text()
         assert "24" in content, "README should mention 24 languages"
 
-    def test_readme_mentions_1995_rules(self):
+    def test_readme_mentions_2254_rules(self):
         content = (PROJECT_ROOT / "README.md").read_text()
-        assert "1,995" in content, "README should mention 1,995 rules"
+        assert "2,254" in content, "README should mention 2,254 rules"
 
     def test_readme_mentions_quality_gates(self):
         content = (PROJECT_ROOT / "README.md").read_text()

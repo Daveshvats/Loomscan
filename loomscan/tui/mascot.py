@@ -340,7 +340,15 @@ class Mascot:
 
     def _render_frame(self, idx: int, with_bubble: bool = True,
                       clear: bool = False) -> None:
-        """Render one mascot frame."""
+        """Render one mascot frame with premium multi-color styling.
+
+        v5.10: Uses Rich Text with per-line styling for a premium look:
+          - Web strands: dim silver (the web structure)
+          - Spider body: bright cyan (the spider itself)
+          - Spinneret silk: bright yellow (the active silk)
+          - Speech bubble: rounded corners + green text
+          - Braille spinner below (like Claude Code's spinner)
+        """
         if not self.console:
             return
         frame = _MASCOT_FRAMES[idx % len(_MASCOT_FRAMES)]
@@ -351,21 +359,20 @@ class Mascot:
         max_w = max(len(l) for l in mascot_lines)
         mascot_lines = [l.ljust(max_w) for l in mascot_lines]
 
+        # v5.10: Braille spinner (like Claude Code / npm)
+        _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        spinner_char = _SPINNER[idx % len(_SPINNER)]
+
         if with_bubble and msg:
-            # Speech bubble on the right side of the spider
-            # Top border:  ___<msg>___
-            # Mid:        ( msg )
-            # Bot:        ‾‾‾<msg>‾‾‾
+            # v5.10: Premium rounded speech bubble
             msg_len = len(msg)
             bubble = [
-                "  " + "_" * (msg_len + 2),
-                f" ( {msg} )",
-                "  " + "‾" * (msg_len + 2),
+                f"  ╭{'─' * (msg_len + 2)}╮",
+                f"  │ {msg} │",
+                f"  ╰{'─' * (msg_len + 2)}╯",
             ]
-            # Place bubble vertically centered next to spider
             n_mascot = len(mascot_lines)
             n_bubble = len(bubble)
-            # Center the bubble against the spider
             offset = max(0, (n_mascot - n_bubble) // 2)
             lines = []
             for i in range(n_mascot):
@@ -376,18 +383,44 @@ class Mascot:
                     right = ""
                 lines.append(f"{left}  {right}")
             content = "\n".join(lines)
+            content += f"\n  {spinner_char} weaving..."
         else:
             content = "\n".join(mascot_lines)
 
         if clear:
-            # Move cursor up to overwrite the previous frame
-            # (frame is ~10-12 lines tall; move up 12 to be safe)
-            sys.stdout.write("\033[12A\r\033[J")
+            sys.stdout.write("\033[14A\r\033[J")
             sys.stdout.flush()
 
-        # Style: green web, yellow spider, cyan speech bubble
-        # Use a single style for simplicity (Rich can do per-char but it's slow)
-        text = Text(content, style="green")
+        # v5.10: Per-line color styling for premium look
+        text = Text()
+        for line in content.split("\n"):
+            # Determine line type and apply style
+            if "╭" in line or "╰" in line or "│" in line:
+                # Speech bubble border/text
+                text.append_text(Text(line, style="green"))
+            elif "weaving" in line:
+                # Spinner line
+                text.append_text(Text(spinner_char + " ", style="bright_yellow bold"))
+                text.append_text(Text("weaving...", style="dim green"))
+            elif "~" in line:
+                # Spinneret silk
+                text.append_text(Text(line, style="bright_yellow"))
+            elif any(c in line for c in "()"):
+                # Spider body
+                text.append_text(Text(line, style="bright_cyan"))
+            elif any(c in line for c in "/\\|"):
+                # Web strands
+                text.append_text(Text(line, style="dim silver"))
+            elif "*" in line:
+                # Web nodes / dewdrops
+                text.append_text(Text(line, style="bright_white"))
+            else:
+                text.append_text(Text(line, style="dim"))
+            text.append("\n")
+        # Remove trailing newline
+        if text.plain.endswith("\n"):
+            text = text[:-1]
+
         self.console.print(text, end="\r")
 
 

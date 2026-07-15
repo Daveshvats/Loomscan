@@ -213,8 +213,27 @@ def dashboard_cmd(repo: str, input_path: str, output: str, open_browser: bool):
     generate_dashboard(repo_root, out_path, findings_json=findings_json)
     click.echo(f"Dashboard written to {out_path}")
     if open_browser:
-        import webbrowser
-        webbrowser.open(f"file://{out_path.resolve()}")
+        # v5.10: Platform-specific browser opening (fixes macOS)
+        import subprocess
+        import platform as _platform
+        abs_path = str(out_path.resolve())
+        opened = False
+        try:
+            system = _platform.system()
+            if system == "Darwin":
+                subprocess.Popen(['open', abs_path])
+                opened = True
+            elif system == "Linux":
+                subprocess.Popen(['xdg-open', abs_path])
+                opened = True
+            elif system == "Windows":
+                subprocess.Popen(['cmd', '/c', 'start', '', abs_path], shell=False)
+                opened = True
+        except Exception:
+            pass
+        if not opened:
+            import webbrowser
+            webbrowser.open(f"file://{out_path.resolve()}")
 
 
 # =============================================================================

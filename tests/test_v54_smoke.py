@@ -24,7 +24,9 @@ class TestLoomScanRename:
 
     def test_loomscan_imports(self):
         from loomscan import __version__
-        assert __version__ >= "5.4.0"
+        # v5.10: Use tuple comparison (5.10.0 > 5.4.0 numerically, but not as string)
+        v_parts = tuple(int(x) for x in __version__.split("."))
+        assert v_parts[0] >= 7 or v_parts >= (5, 4, 0), f"Version {__version__} < 5.4.0"
 
     def test_loomscan_cli_imports(self):
         from loomscan.cli import main
@@ -192,8 +194,9 @@ class TestIncrementalCPGCaching:
 class TestVersionV54:
     def test_version_is_5_4(self):
         from loomscan import __version__
-        major, minor = int(__version__.split(".")[0]), int(__version__.split(".")[1])
-        assert major >= 5 and minor >= 4, f"Expected >= 5.4.0, got {__version__}"
+        major = int(__version__.split(".")[0])
+        minor = int(__version__.split(".")[1])
+        assert major >= 7 or (major == 5 and minor >= 4), f"Expected >= 5.4.0, got {__version__}"
 
     def test_pyproject_matches(self):
         from loomscan import __version__

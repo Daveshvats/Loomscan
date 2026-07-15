@@ -1,0 +1,841 @@
+# =============================================================================
+# LoomScan Java rule pack — Production-Incident Prevention
+# =============================================================================
+# Scope: NEW rules that catch Java/Spring errors which cause PRODUCTION
+# INCIDENTS (500 errors, OOM, data leaks, RCE, crashes) BEFORE they ship.
+#
+# Design notes (read before editing):
+#   * The YAML regex engine (loomscan/yaml_engine.py + rule_dsl.py) matches
+#     PER-LINE with Python's `re` module. Patterns MUST match a single line
+#     of Java source — do NOT use `\n` or DOTALL constructs.
+#   * Patterns use Python regex syntax. Inline flags via /pattern/i are also
+#     supported by the engine.
+#   * Single-quoted YAML strings are used: backslashes are literal, and a
+#     literal single quote is written as '' (so a char-class ['"] becomes
+#     [''"]).
+#   * Negative lookaheads like ^(?!.*try\s*\() are used as line-anchored
+#     "absence" checks (e.g. "variable assigned OUTSIDE try-with-resources").
+#   * Taint cannot be tracked with regex, so SSRF/path-traversal rules use the
+#     same user-input variable-name heuristic already used by java-deep.yml
+#     (request|req|input|user|req.getParameter|args|...).
+#   * These rules are INTENTIONALLY non-overlapping with java-security.yml,
+#     java-deep.yml and java-frameworks.yml. Deduplicate against those packs
+#     if you merge.
+# =============================================================================
+
+rules:
+
+  # =========================================================================
+  # 1. SQL INJECTION (gaps not covered by existing @Query/JdbcTemplate rules)
+  # =========================================================================
+  - id: sql-stringbuilder-query
+    pattern: '\bStringBuilder\b.{0,200}?\b(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|WHERE)\b'
+    severity: high
+    message: "SQL built with StringBuilder — likely SQL injection. Use parameterized queries / JdbcTemplate bind args."
+    metadata:
+      cwe: CWE-89
+      owasp: A03
+
+  - id: sql-entitymanager-createquery-concat
+    pattern: '\.create(?:Native)?Query\s*\(\s*"[^"]*"\s*\+'
+    severity: critical
+    message: "EntityManager.create(Native)Query with string concatenation — SQL injection. Bind parameters with setParameter."
+    metadata:
+      cwe: CWE-89
+      owasp: A03
+
+  - id: sql-query-spel-tclass-injection
+    pattern: '@Query\s*\([^)]*#\{[^}]*\bT\s*\('
+    severity: high
+    message: "@Query SpEL uses T(...) type reference — SpEL injection / RCE risk if any input reaches the expression. Avoid T() in @Query SpEL."
+    metadata:
+      cwe: CWE-94
+      owasp: A03
+
+  - id: sql-mybatis-dollar-brace-substitution
+    pattern: '@(?:Select|Insert|Update|Delete)\s*\(\s*"[^"]*\$\{'
+    severity: critical
+    message: "MyBatis ${...} substitution concatenates raw SQL — SQL injection. Use #{...} parameter binding instead."
+    metadata:
+      cwe: CWE-89
+      owasp: A03
+
+  # =========================================================================
+  # 2. SSRF (existing rules flag any HTTP call; these target user-controlled URLs)
+  # =========================================================================
+  - id: ssrf-url-openconnection-variable
+    pattern: 'new\s+URL\s*\(\s*(?!["''])\w+\s*\)\s*\.(?:openConnection|openStream)'
+    severity: high
+    message: "URL.openConnection with a variable URL — SSRF risk if URL is user-controlled. Validate/scheme-allowlist the URL."
+    metadata:
+      cwe: CWE-918
+      owasp: A10
+
+  - id: ssrf-resttemplate-user-controlled-url
+    pattern: '(?:restTemplate|RestTemplate)\.(?:exchange|getForObject|getForEntity|postForObject|postForEntity|put|delete|patchForObject)\s*\(\s*(?:request|req|input|user|url|host|target|endpoint|uri|callback|redirect|fwd)\w*|(?:webClient|WebClient)\b.{0,40}?\.uri\s*\(\s*(?:request|req|input|user|url|host|target|endpoint|uri|callback|redirect|fwd)\w*'
+    severity: high
+    message: "RestTemplate/WebClient called with a user-named URL variable — SSRF risk. Allowlist destinations and block private ranges."
+    metadata:
+      cwe: CWE-918
+      owasp: A10
+
+  - id: ssrf-httpclient-requestbuilder-variable
+    pattern: 'HttpRequest\.newBuilder\s*\(\s*(?:URI\.create\s*\()?\s*(?:uri|url|host|endpoint|target|callback|request|input|user|redirect)\w*'
+    severity: high
+    message: "HttpClient request built from a user-named URI variable — SSRF risk. Validate scheme/host and block internal addresses."
+    metadata:
+      cwe: CWE-918
+      owasp: A10
+
+  # =========================================================================
+  # 3. PATH TRAVERSAL (existing covers new File(userInput); these add Paths.get/resolve/concat)
+  # =========================================================================
+  - id: pathtrav-paths-get-variable
+    pattern: 'Paths\.get\s*\(\s*(?:request|req|input|user|req\.getParameter|args|fileName|filename|path|userPath|filePath|name)\w*'
+    severity: high
+    message: "Paths.get with user-controlled path — path traversal. Canonicalize and confine to a base directory."
+    metadata:
+      cwe: CWE-22
+      owasp: A01
+
+  - id: pathtrav-path-resolve-variable
+    pattern: '\.resolve\s*\(\s*(?:request|req\.getParameter|input|user|args|fileName|filename|path|name|userPath)\w*\s*\)'
+    severity: medium
+    message: "Path.resolve with user input — verify the base path confines the result; otherwise path traversal."
+    metadata:
+      cwe: CWE-22
+      owasp: A01
+
+  - id: pathtrav-file-concat-variable
+    pattern: 'new\s+File\s*\([^)]*\+\s*(?:request|req\.getParameter|input|user|args|fileName|filename|path|name|userPath)\w*'
+    severity: high
+    message: "new File(base + userInput) — path traversal. Canonicalize and reject '..' / absolute paths."
+    metadata:
+      cwe: CWE-22
+      owasp: A01
+
+  # =========================================================================
+  # 4. DESERIALIZATION (existing covers ObjectInputStream/readObject/Jackson/XStream)
+  # =========================================================================
+  - id: deser-xmldecoder
+    pattern: 'new\s+XMLDecoder\s*\('
+    severity: critical
+    message: "java.beans.XMLDecoder deserializes arbitrary objects — RCE on untrusted input. Avoid; use a schema-validated parser."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  - id: deser-snakeyaml-load
+    pattern: 'new\s+Yaml\s*\([^)]*\)\s*\.\s*(?:load|loadAs|loadAll)\s*\('
+    severity: critical
+    message: "SnakeYAML Yaml.load is unsafe (arbitrary object construction) — RCE. Use new Yaml(new SafeConstructor())."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  - id: deser-spring-serialization-utils
+    pattern: 'SerializationUtils\.deserialize\s*\('
+    severity: critical
+    message: "Spring SerializationUtils.deserialize uses Java serialization — RCE on untrusted bytes. Use JSON with type constraints."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  - id: deser-kryo-readclassandobject
+    pattern: '\bkryo\s*\.\s*(?:readClassAndObject|readObject)\s*\('
+    severity: critical
+    message: "Kryo readClassAndObject/readObject on untrusted input — deserialization RCE. Register an allowlist of classes."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  # =========================================================================
+  # 5. XXE (existing covers DocumentBuilderFactory/SAXParser/StAX/JAXB; these add dom4j/TransformerFactory/XMLReaderFactory)
+  # =========================================================================
+  - id: xxe-dom4j-saxreader
+    pattern: 'new\s+SAXReader\s*\('
+    severity: high
+    message: "dom4j SAXReader is XXE-vulnerable by default. Call setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true)."
+    metadata:
+      cwe: CWE-611
+      owasp: A05
+
+  - id: xxe-transformerfactory-unconfigured
+    pattern: 'TransformerFactory\.newInstance\s*\(\s*\)'
+    severity: medium
+    message: "TransformerFactory without FEATURE_SECURE_PROCESSING — XSLT/XXE risk on untrusted input. Set secure processing."
+    metadata:
+      cwe: CWE-611
+      owasp: A05
+
+  - id: xxe-xmlreaderfactory-create
+    pattern: 'XMLReaderFactory\.createXMLReader\s*\('
+    severity: high
+    message: "XMLReaderFactory.createXMLReader — XXE risk. Set disallow-doctype-decl / external-general-entities to false."
+    metadata:
+      cwe: CWE-611
+      owasp: A05
+
+  # =========================================================================
+  # 6. COMMAND INJECTION (existing covers generic Runtime.exec/ProcessBuilder;
+  #    this catches the sh -c / bash -c shell form with concat = guaranteed injection)
+  # =========================================================================
+  - id: cmdinj-runtime-exec-shell-concat
+    pattern: 'Runtime\.getRuntime\s*\(\s*\)\s*\.\s*exec\s*\(\s*"(?:sh|bash|cmd|/bin/sh|/bin/bash)[^"]*"\s*\+'
+    severity: critical
+    message: "Runtime.exec(\"sh\" + userInput) — command injection via shell. Use ProcessBuilder with an argument list, never a shell string."
+    metadata:
+      cwe: CWE-78
+      owasp: A03
+
+  # =========================================================================
+  # 7. CRYPTOGRAPHY (existing covers MD5/SHA1/DES/ECB/RSA-NoPadding/Blowfish/RC4;
+  #    these add hardcoded keys/IV, bare AES, base64 keys)
+  # =========================================================================
+  - id: crypto-hardcoded-secretkeyspec
+    pattern: 'new\s+SecretKeySpec\s*\(\s*(?:"[^"]+"|''[^'']+'')\s*\.getBytes'
+    severity: high
+    message: "SecretKeySpec built from a hardcoded string — key disclosure. Load keys from a secrets manager / KMS."
+    metadata:
+      cwe: CWE-321
+      owasp: A02
+
+  - id: crypto-hardcoded-ivparameterspec
+    pattern: 'new\s+IvParameterSpec\s*\(\s*(?:"[^"]+"\s*\.getBytes|new\s+byte\s*\[\s*\]\s*\{)'
+    severity: medium
+    message: "Hardcoded IV — reusing an IV with the same key breaks CBC/GCM security. Generate a random IV per message."
+    metadata:
+      cwe: CWE-329
+      owasp: A02
+
+  - id: crypto-aes-bare-no-mode
+    pattern: 'Cipher\.getInstance\s*\(\s*"AES"\s*\)'
+    severity: high
+    message: "Cipher.getInstance(\"AES\") defaults to AES/ECB — ECB leaks patterns. Use AES/GCM/NoPadding with a random IV."
+    metadata:
+      cwe: CWE-327
+      owasp: A02
+
+  - id: crypto-base64-hardcoded-key
+    pattern: '(?:Base64\.getDecoder\s*\(\s*\)\.decode|DatatypeConverter\.parseBase64Binary)\s*\(\s*"[A-Za-z0-9+/]{16,}={0,2}"\s*\)'
+    severity: high
+    message: "Decoding a hardcoded Base64 key string — key disclosure. Store keys in a secrets manager, not source."
+    metadata:
+      cwe: CWE-321
+      owasp: A02
+
+  # =========================================================================
+  # 8. CONCURRENCY (existing covers synchronized(this)/String, volatile array,
+  #    double-checked locking; these add shared SimpleDateFormat, boxed-primitive
+  #    lock, deprecated Thread.stop)
+  # =========================================================================
+  - id: conc-static-simpledateformat
+    pattern: 'static\s+(?:final\s+)?(?:SimpleDateFormat|DateFormat)\s+'
+    severity: high
+    message: "Static SimpleDateFormat is shared across threads and is NOT thread-safe — data corruption/crashes. Use DateTimeFormatter or ThreadLocal."
+    metadata:
+      cwe: CWE-362
+
+  - id: conc-synchronized-boxed-primitive
+    pattern: 'synchronized\s*\(\s*(?:Integer|Long|Short|Byte|Double|Float|Boolean|Character)\.valueOf\s*\('
+    severity: medium
+    message: "synchronized on a boxed primitive uses the JVM cache — unrelated code can lock the same monitor, causing deadlock/starvation. Lock a dedicated final Object."
+    metadata:
+      cwe: CWE-362
+
+  - id: conc-thread-stop-destroy
+    pattern: 'Thread\.currentThread\s*\(\s*\)\s*\.\s*(?:stop|suspend|resume|destroy)\s*\(\s*\)|\bThread\.(?:stop|destroy)\s*\(\s*\)|\b\w*(?:[Tt]hread|[Ww]orker)\w*\s*\.\s*(?:stop|suspend|resume)\s*\(\s*\)'
+    severity: high
+    message: "Thread.stop/destroy/suspend/resume are deprecated and unsafe (corrupted state, deadlock). Use interrupts / cooperative cancellation."
+    metadata:
+      cwe: CWE-362
+
+  # =========================================================================
+  # 9. RESOURCE LEAKS (existing flags try-finally-close Semgrep-style;
+  #    these catch the classic "Type var = new Closeable(...)" assignment
+  #    OUTSIDE try-with-resources, the #1 cause of connection-pool exhaustion)
+  # =========================================================================
+  - id: leak-connection-not-try-with-resources
+    pattern: '^(?!.*\btry\s*\().*\bConnection\s+\w+\s*=\s*\w*\.?getConnection[^;]*;'
+    severity: high
+    message: "Connection assigned outside try-with-resources — connection leak / pool exhaustion. Use try (Connection c = ds.getConnection()) { ... }."
+    metadata:
+      cwe: CWE-404
+      owasp: A09
+
+  - id: leak-statement-not-try-with-resources
+    pattern: '^(?!.*\btry\s*\().*\bStatement\s+\w+\s*=\s*\w+\.createStatement[^;]*;'
+    severity: high
+    message: "Statement assigned outside try-with-resources — cursor/statement leak. Use try-with-resources."
+    metadata:
+      cwe: CWE-404
+
+  - id: leak-preparedstatement-not-try-with-resources
+    pattern: '^(?!.*\btry\s*\().*\bPreparedStatement\s+\w+\s*=\s*\w+\.prepareStatement[^;]*;'
+    severity: high
+    message: "PreparedStatement assigned outside try-with-resources — leak. Use try-with-resources."
+    metadata:
+      cwe: CWE-404
+
+  - id: leak-bufferedreader-not-try-with-resources
+    pattern: '^(?!.*\btry\s*\().*\bBufferedReader\s+\w+\s*=\s*new\s+BufferedReader[^;]*;'
+    severity: medium
+    message: "BufferedReader assigned outside try-with-resources — file-handle leak. Use try-with-resources."
+    metadata:
+      cwe: CWE-775
+
+  - id: leak-inputstream-not-try-with-resources
+    pattern: '^(?!.*\btry\s*\().*\b(?:FileInputStream|BufferedInputStream|InputStream)\s+\w+\s*=\s*new\s+(?:FileInputStream|BufferedInputStream)[^;]*;'
+    severity: medium
+    message: "InputStream assigned outside try-with-resources — file-handle leak. Use try-with-resources."
+    metadata:
+      cwe: CWE-775
+
+  - id: leak-filewriter-not-try-with-resources
+    pattern: '^(?!.*\btry\s*\().*\bFileWriter\s+\w+\s*=\s*new\s+FileWriter[^;]*;'
+    severity: medium
+    message: "FileWriter assigned outside try-with-resources — file-handle leak and un-flushed data loss. Use try-with-resources."
+    metadata:
+      cwe: CWE-775
+
+  # =========================================================================
+  # 10. NULL SAFETY (existing covers Optional.get / Optional.orElse(null);
+  #     these add findFirst().get(), autoboxing unbox, and .get().chained())
+  # =========================================================================
+  - id: npe-findfirst-findany-get
+    pattern: '\.find(?:First|Any)\s*\(\s*\)\s*\.\s*get\s*\(\s*\)'
+    severity: high
+    message: "findFirst()/findAny().get() throws NoSuchElementException on empty stream. Use isPresent()/ifPresent()/orElseThrow() with a message."
+    metadata:
+      cwe: CWE-754
+
+  - id: npe-unbox-map-get-to-primitive
+    pattern: '\b(?:int|long|double|float|boolean|short|byte|char)\s+\w+\s*=\s*(?!\w*[Aa]tomic)\w+\.get\s*\('
+    severity: medium
+    message: "Assigning Map.get(...) to a primitive autoboxes — NPE if the key is absent. Use getOrDefault or check for null first."
+    metadata:
+      cwe: CWE-476
+
+  - id: npe-get-then-deref
+    pattern: '\.get\s*\(\s*\)\s*\.\s*\w+\s*\('
+    severity: high
+    message: ".get().method() dereferences the result without a null/isPresent check — NPE risk (Optional/Map). Use orElse*/ifPresent."
+    metadata:
+      cwe: CWE-476
+
+  # =========================================================================
+  # 11. SPRING SECURITY MISCONFIGURATION (existing covers csrf().disable,
+  #     antMatchers(\"/**\").permitAll, noop/md5/sha1 encoders, https-cookie-secure-false,
+  #     method-security-disabled; these add anyRequest().permitAll, web.ignoring,
+  #     headers().disable, requiresInsecure, @PreAuthorize SpEL injection)
+  # =========================================================================
+  - id: springsec-any-request-permit-all
+    pattern: 'anyRequest\s*\(\s*\)\s*\.\s*permitAll\s*\(\s*\)'
+    severity: high
+    message: "anyRequest().permitAll() disables authorization for all unmatched requests — auth bypass. Use authenticated() and allowlist specific paths."
+    metadata:
+      cwe: CWE-862
+      owasp: A01
+
+  - id: springsec-web-ignoring-antmatchers-all
+    pattern: 'web\s*\.\s*ignoring\s*\(\s*\)\s*\.\s*(?:antMatchers|requestMatchers)\s*\(\s*"/\*\*"'
+    severity: high
+    message: "web.ignoring().antMatchers(\"/**\") skips the ENTIRE security filter chain (incl. CSRF, security headers) for all paths — broad bypass."
+    metadata:
+      cwe: CWE-693
+      owasp: A05
+
+  - id: springsec-headers-disabled
+    pattern: 'headers\s*\(\s*\)\s*\.\s*disable\s*\(\s*\)'
+    severity: medium
+    message: "headers().disable() turns off X-Frame-Options, X-XSS-Protection, HSTS — clickjacking/XSS exposure. Remove unless explicitly justified."
+    metadata:
+      cwe: CWE-693
+      owasp: A05
+
+  - id: springsec-requires-insecure
+    pattern: 'requiresInsecure\s*\('
+    severity: high
+    message: "requiresInsecure() forces HTTP — plaintext transport / credential leak. Use requiresSecure() and redirect HTTP->HTTPS."
+    metadata:
+      cwe: CWE-319
+      owasp: A02
+
+  - id: springsec-preauthorize-spel-concat
+    pattern: '@PreAuthorize\s*\([^)]*"\s*\+'
+    severity: high
+    message: "@PreAuthorize built with string concatenation — SpEL injection / authz bypass. Use SpEL variables (#param), never concat."
+    metadata:
+      cwe: CWE-94
+      owasp: A01
+
+  - id: springsec-preauthorize-spel-tclass
+    pattern: '@PreAuthorize\s*\([^)]*\bT\s*\(\s*java\.'
+    severity: high
+    message: "@PreAuthorize SpEL references T(java...) — type reflection enables arbitrary code execution if input reaches the expression. Remove T()."
+    metadata:
+      cwe: CWE-94
+      owasp: A01
+
+  # =========================================================================
+  # 12. ERROR-HANDLING ANTI-PATTERNS (existing covers catch Exception/Throwable,
+  #     throw new Exception, empty catch; these add swallow-and-return,
+  #     throw-in-finally, raw `throws Exception`)
+  # =========================================================================
+  - id: err-catch-return-swallow
+    pattern: 'catch\s*\([^)]*\)\s*\{\s*return\b'
+    severity: medium
+    message: "catch { return ... } swallows the exception and silently returns — masks failures (often returns null/0 causing downstream NPE). Log and rethrow or return a typed error."
+    metadata:
+      cwe: CWE-390
+
+  - id: err-throw-in-finally
+    pattern: 'finally\s*\{[^}]*\bthrow\b'
+    severity: medium
+    message: "throw inside finally — suppresses the original exception from the try block, hiding the real cause. Never throw in finally."
+    metadata:
+      cwe: CWE-396
+
+  - id: err-method-throws-raw-exception
+    pattern: '\bthrows\b[^{;]*\bException\b'
+    severity: low
+    message: "Method declares `throws Exception` — forces callers into broad catch blocks that mask real errors and produce generic 500s. Declare specific exceptions."
+    metadata:
+      cwe: CWE-396
+
+  # =========================================================================
+  # 13. PERFORMANCE ANTI-PATTERNS (existing covers stream().collect(toList) OOM;
+  #     user has @OneToMany N+1; these add findAll() unpaginated, EAGER fetch,
+  #     default-EAGER @ManyToOne, save-in-forEach)
+  # =========================================================================
+  - id: perf-findall-unpaginated
+    pattern: '\.\s*findAll\s*\(\s*\)'
+    severity: medium
+    message: "findAll() with no Pageable loads the entire table into memory — OOM / DB pressure as data grows. Use findAll(Pageable) or a stream with limits."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-onetomany-eager-fetch
+    pattern: '@OneToMany\s*\([^)]*fetch\s*=\s*FetchType\.EAGER'
+    severity: high
+    message: "@OneToMany(fetch=EAGER) loads the whole collection per parent — N+1 / OOM on large graphs. Use LAZY + explicit fetching/join."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-manytoone-default-eager
+    pattern: '@ManyToOne\b(?!.*fetch\s*=\s*FetchType\.LAZY)'
+    severity: medium
+    message: "@ManyToOne defaults to EAGER — N+1 queries when iterating collections. Set fetch=FetchType.LAZY and join-fetch where needed."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-save-in-foreach-stream
+    pattern: '\.stream\s*\(\s*\)\s*\.\s*forEach\s*\([^)]*(?:::|\.)(?:save|insert|update|delete)\w*'
+    severity: medium
+    message: "save/insert inside stream().forEach() issues N separate statements — use saveAll/ batch inserts. Major prod slowdown on large inputs."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 14. LOGGING ISSUES (existing covers spring-logging-secret; these add
+  #     log injection via raw user input and logging of sensitive fields)
+  # =========================================================================
+  - id: log-user-input-unsanitized
+    pattern: 'log(?:ger)?\.(?:info|debug|warn|error|trace|fatal)\s*\(\s*(?:request|req|input|user|httpRequest|servletRequest|exchange)\.(?:getParameter|getHeader|getReader|getBody|getQueryParams|getURI|getPath|getInputStream)'
+    severity: medium
+    message: "Logging raw user input — log injection (CRLF forgery) and log parsing corruption. Sanitize/encode newlines before logging."
+    metadata:
+      cwe: CWE-117
+      owasp: A09
+
+  - id: log-sensitive-field
+    pattern: 'log(?:ger)?\.(?:info|debug|warn|error|trace)\s*\([^)]*[\+"'' ,=]\s*\w*(?i:password|passwd|secret|api[_-]?key|secret[_-]?key|access[_-]?key|private[_-]?key|token|creditcard|card[_-]?number|cvv|ssn|pan)\w*\s*[,)]'
+    severity: high
+    message: "Logging a sensitive field (password/token/key/card) — information disclosure to log aggregators. Mask or omit secrets in logs."
+    metadata:
+      cwe: CWE-532
+      owasp: A09
+
+  # =========================================================================
+  # 15. INPUT VALIDATION (existing covers model-attribute binding / multipart;
+  #     these add missing @Valid on @RequestBody, @PathVariable String for IDs,
+  #     raw Map body)
+  # =========================================================================
+  - id: valid-requestbody-missing-valid
+    pattern: '^(?!.*@(?:Valid|Validated)\b).*@RequestBody\s+(?!String\b|Map\b|List\b|Object\b)\w+'
+    severity: medium
+    message: "@RequestBody DTO without @Valid/@Validated — bean-validation constraints on the DTO are skipped. Add @Valid."
+    metadata:
+      cwe: CWE-20
+      owasp: A03
+
+  - id: valid-pathvariable-string-for-id
+    pattern: '@PathVariable\s+String\s+\w*(?:[Ii]d|uuid|UUID|key|code|slug|token)\w*\s*[),]'
+    severity: medium
+    message: "@PathVariable String for an id/uuid/key — accepts any input (path traversal / injection). Use a typed UUID/Long or validate format."
+    metadata:
+      cwe: CWE-20
+      owasp: A03
+
+  - id: valid-requestbody-raw-map
+    pattern: '@RequestBody\s+Map\s*<'
+    severity: medium
+    message: "@RequestBody Map<...> accepts arbitrary JSON — no schema/size/shape validation. Bind a typed DTO with constraints instead."
+    metadata:
+      cwe: CWE-20
+      owasp: A03
+
+  # =========================================================================
+  # 16. JPA / HIBERNATE BATCH ISSUES (production OOM + slow queries)
+  # =========================================================================
+  - id: jpa-flush-in-loop
+    pattern: 'for\s*\(.*\)\s*\{[^}]*\.flush\(\)'
+    severity: high
+    message: "EntityManager.flush() inside a loop — causes N database round-trips. Batch flush outside the loop or use @BatchSize."
+    metadata:
+      cwe: CWE-400
+  - id: jpa-saveall-in-loop
+    pattern: 'for\s*\(.*\)\s*\{[^}]*\.save\s*\('
+    severity: medium
+    message: "repository.save() inside a loop — N individual INSERTs. Use saveAll() for batch insert."
+    metadata:
+      cwe: CWE-400
+  - id: jpa-no-batch-size
+    pattern: '@OneToMany\s*\([^)]*fetch\s*=\s*FetchType\.EAGER'
+    severity: high
+    message: "EAGER @OneToMany — loads ALL child entities. Use LAZY fetch + @BatchSize to prevent OOM and N+1."
+    metadata:
+      cwe: CWE-400
+  - id: jpa-nativesql-select-star
+    pattern: 'createNativeQuery\s*\(\s*[''"]SELECT\s+\*'
+    severity: medium
+    message: "Native query with SELECT * — pulls all columns including large ones. Select only needed columns."
+    metadata:
+      cwe: CWE-400
+  - id: jpa-criteria-builder-no-distinct
+    pattern: 'CriteriaBuilder.*\.createQuery.*multiselect.*\)\s*\)\s*;\s*$'
+    severity: low
+    message: "Criteria query without DISTINCT on joins — may return duplicate rows. Add .distinct(true)."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 17. REACTIVE PROGRAMMING (Project Reactor / WebFlux)
+  # =========================================================================
+  - id: reactive-mono-block
+    pattern: '\.block\s*\(\s*\)'
+    severity: high
+    message: "Mono.block() in reactive code — blocks the event loop thread. Use subscribe() or return the Mono."
+    metadata:
+      cwe: CWE-754
+  - id: reactive-flux-collectlist-oom
+    pattern: 'Flux.*\.collectList\s*\(\)'
+    severity: medium
+    message: "Flux.collectList() — buffers entire stream in memory. For large streams, process elements individually."
+    metadata:
+      cwe: CWE-400
+  - id: reactive-flux-to-iterable
+    pattern: 'Flux.*\.toIterable\s*\(\)'
+    severity: high
+    message: "Flux.toIterable() — blocks and buffers entire stream. Use reactive operators instead."
+    metadata:
+      cwe: CWE-754
+  - id: reactive-no-onerrormap
+    pattern: '\.flatMap\s*\([^)]*\)\s*(?!.*\.onErrorReturn|.*\.onErrorResume|.*\.onErrorMap)'
+    severity: medium
+    message: "Reactive chain without error handling — unhandled errors propagate and cause 500s. Add onErrorResume/onErrorReturn."
+    metadata:
+      cwe: CWE-755
+  - id: reactive-subscribe-no-error-handler
+    pattern: '\.subscribe\s*\(\s*\)'
+    severity: medium
+    message: "subscribe() without error handler — exceptions are swallowed silently. Pass an error Consumer: subscribe(next, error)."
+    metadata:
+      cwe: CWE-390
+
+  # =========================================================================
+  # 18. MEMORY LEAK PATTERNS (production OOM over time)
+  # =========================================================================
+  - id: leak-static-collection
+    pattern: 'static\s+(?:final\s+)?(?:List|Map|Set|HashMap|ArrayList|HashSet|ConcurrentHashMap)\s*<'
+    severity: high
+    message: "Static collection — entries never garbage collected. Ensure bounded size or use WeakHashMap/Cache with TTL."
+    metadata:
+      cwe: CWE-401
+  - id: leak-threadlocal-no-remove
+    pattern: 'ThreadLocal\s*<[^>]+>\s+\w+\s*=\s*new\s+ThreadLocal'
+    severity: high
+    message: "ThreadLocal without remove() — causes memory leaks in thread pools. Always call remove() in finally block."
+    metadata:
+      cwe: CWE-401
+  - id: leak-static-spring-bean
+    pattern: 'static\s+(?:@Autowired|@Resource|@Inject)'
+    severity: high
+    message: "Static @Autowired field — Spring bean held in static reference prevents GC. Use instance field or @PostConstruct."
+    metadata:
+      cwe: CWE-401
+  - id: leak-scheduled-fixed-rate
+    pattern: 'scheduleAtFixedRate|scheduleWithFixedDelay'
+    severity: low
+    message: "Scheduled task — verify it doesn't accumulate state. Long-running tasks can cause thread pool exhaustion."
+    metadata:
+      cwe: CWE-754
+
+  # =========================================================================
+  # 19. TIME / DATE BUGS (production timezone + formatting issues)
+  # =========================================================================
+  - id: date-simpledateformat-shared
+    pattern: 'static\s+(?:final\s+)?SimpleDateFormat'
+    severity: high
+    message: "Static SimpleDateFormat — NOT thread-safe. Use DateTimeFormatter (thread-safe) or ThreadLocal<SimpleDateFormat>."
+    metadata:
+      cwe: CWE-362
+  - id: date-date-deprecated
+    pattern: 'new\s+Date\s*\(\s*\d+\s*\)|new\s+Date\s*\(\s*\)|Date\.getYear\s*\(\s*\)|Date\.getMonth\s*\(\s*\)'
+    severity: low
+    message: "Deprecated Date constructor/method — use java.time.LocalDate/Instant/ZonedDateTime instead."
+    metadata:
+      cwe: CWE-477
+  - id: date-calendar-no-zone
+    pattern: 'Calendar\.getInstance\s*\(\s*\)'
+    severity: info
+    message: "Calendar.getInstance() uses default timezone — may cause bugs in distributed systems. Use ZonedDateTime with explicit ZoneId."
+    metadata:
+      cwe: CWE-755
+
+  # =========================================================================
+  # 20. COMPLETABLEFUTURE EXCEPTION SWALLOWING
+  # =========================================================================
+  - id: cfuture-no-exceptionally
+    pattern: 'CompletableFuture.*\.(?:thenApply|thenAccept|thenRun)\s*\([^)]*\)\s*(?!.*\.exceptionally|.*\.handle|.*\.whenComplete)'
+    severity: medium
+    message: "CompletableFuture chain without exceptionally()/handle() — unhandled exceptions are silently lost. Add error handling."
+    metadata:
+      cwe: CWE-390
+  - id: cfuture-get-no-timeout
+    pattern: '\.get\s*\(\s*\)\s*;\s*$'
+    severity: medium
+    message: "CompletableFuture.get() without timeout — blocks forever if the future never completes. Use get(timeout, unit)."
+    metadata:
+      cwe: CWE-754
+  - id: cfuture-join-no-timeout
+    pattern: '\.join\s*\(\s*\)\s*;\s*$'
+    severity: medium
+    message: "CompletableFuture.join() without timeout — blocks forever. Wrap in orTimeout() or use allOf()."
+    metadata:
+      cwe: CWE-754
+
+  # =========================================================================
+  # 21. MISSING RESILIENCE (retry / circuit breaker for external calls)
+  # =========================================================================
+  - id: resilience-no-retry-resttemplate
+    pattern: 'restTemplate\.(?:getForObject|postForObject|exchange|getForEntity|postForEntity)'
+    severity: info
+    message: "RestTemplate call without retry — transient failures cause 500. Add @Retryable or Spring Retry."
+    metadata:
+      cwe: CWE-754
+  - id: resilience-no-fallback-feign
+    pattern: '@FeignClient'
+    severity: medium
+    message: "@FeignClient without fallback — downstream failure propagates as 500. Add fallback or fallbackFactory."
+    metadata:
+      cwe: CWE-755
+  - id: resilience-no-circuit-breaker
+    pattern: '@RequestMapping.*\n.*restTemplate|@GetMapping.*\n.*restTemplate'
+    severity: info
+    message: "External HTTP call without circuit breaker — cascading failures. Add @CircuitBreaker (Resilience4j)."
+    metadata:
+      cwe: CWE-754
+
+  # =========================================================================
+  # 22. CACHE MISCONFIGURATION
+  # =========================================================================
+  - id: cache-concurrenthashmap-unbounded
+    pattern: 'ConcurrentHashMap\s*<[^>]+>\s+\w+\s*=\s*new\s+ConcurrentHashMap'
+    severity: medium
+    message: "Unbounded ConcurrentHashMap cache — grows indefinitely. Use Caffeine with maximumSize and expireAfterWrite."
+    metadata:
+      cwe: CWE-400
+  - id: cache-caffeine-no-ttl
+    pattern: 'Caffeine\.newBuilder\s*\(\s*\)\s*\.build\s*\(\s*\)'
+    severity: medium
+    message: "Caffeine cache without TTL or size limit — may cause OOM. Add .maximumSize() and .expireAfterWrite()."
+    metadata:
+      cwe: CWE-400
+  - id: cache-spring-no-eviction
+    pattern: '@Cacheable\s*\(\s*["'']'
+    severity: info
+    message: "@Cacheable without eviction policy — cache grows unbounded. Configure TTL via @CacheEvict or cache config."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 23. FILE UPLOAD SECURITY
+  # =========================================================================
+  - id: upload-multipart-no-limit
+    pattern: 'MultipartFile\s+\w+|@RequestPart\s*\('
+    severity: high
+    message: "File upload without size limit — can cause OOM or DoS. Set spring.servlet.multipart.max-file-size."
+    metadata:
+      cwe: CWE-400
+  - id: upload-no-content-type-check
+    pattern: 'MultipartFile.*\.getOriginalFilename\s*\(\s*\)'
+    severity: medium
+    message: "File upload — only checking filename, not content type. Validate actual content type to prevent malicious uploads."
+    metadata:
+      cwe: CWE-434
+  - id: upload-save-with-original-name
+    pattern: 'transferTo\s*\(\s*new\s+File.*getOriginalFilename'
+    severity: high
+    message: "Saving upload with original filename — path traversal risk. Generate a UUID filename instead."
+    metadata:
+      cwe: CWE-22
+
+  # =========================================================================
+  # 24. JWT SECURITY
+  # =========================================================================
+  - id: jwt-hardcoded-secret
+    pattern: 'Jwts\.builder\s*\(\s*\).*\.signWith\s*\(\s*Keys\.hmacShaKeyFor\s*\(\s*[''"]'
+    severity: critical
+    message: "JWT signed with hardcoded secret — secret is in source code. Load from environment/config."
+    metadata:
+      cwe: CWE-798
+  - id: jwt-none-algorithm
+    pattern: 'SignatureAlgorithm\.NONE|Algorithm\.none\s*\(\s*\)'
+    severity: critical
+    message: "JWT with NONE algorithm — no signature verification. Use HS256 or RS256."
+    metadata:
+      cwe: CWE-347
+  - id: jwt-no-expiration
+    pattern: 'Jwts\.builder\s*\(\s*\)(?!.*\.setExpiration)'
+    severity: high
+    message: "JWT without expiration — token valid forever. Add .setExpiration() with short TTL."
+    metadata:
+      cwe: CWE-613
+
+  # =========================================================================
+  # 25. RACE CONDITIONS
+  # =========================================================================
+  - id: race-check-then-act
+    pattern: 'if\s*\(\s*\w+\.get\s*\([^)]*\)\s*==\s*null\s*\)\s*\{[^}]*\.put\s*\('
+    severity: medium
+    message: "Check-then-act on shared collection — race condition. Use computeIfAbsent() or putIfAbsent()."
+    metadata:
+      cwe: CWE-362
+  - id: race-double-checked-locking
+    pattern: 'if\s*\(\s*\w+\s*==\s*null\s*\)\s*\{[^}]*synchronized'
+    severity: medium
+    message: "Double-checked locking — ensure field is volatile. Without volatile, another thread may see partially constructed object."
+    metadata:
+      cwe: CWE-362
+  - id: race-get-check-then-update
+    pattern: 'if\s*\(\s*!\w+\.containsKey\s*\([^)]*\)\s*\)\s*\{[^}]*\.put\s*\('
+    severity: medium
+    message: "containsKey then put — race condition on Map. Use putIfAbsent() or computeIfAbsent()."
+    metadata:
+      cwe: CWE-362
+
+  # =========================================================================
+  # 26. DOCKER / K8s / JVM CONFIG (deployment-time incidents)
+  # =========================================================================
+  - id: jvm-xmx-too-high
+    pattern: '-Xmx\d+[gG]'
+    severity: info
+    message: "JVM -Xmx set very high — may cause OOM killer in containers. Set to 75% of container memory limit."
+    metadata:
+      cwe: CWE-400
+  - id: jvm-no-heap-dump
+    pattern: '-XX:\+HeapDumpOnOutOfMemoryError'
+    severity: info
+    message: "JVM without -XX:+HeapDumpOnOutOfMemoryError — no heap dump on OOM for debugging. Add this flag."
+    metadata:
+      cwe: CWE-755
+  - id: spring-devtools-prod
+    pattern: 'spring-boot-devtools'
+    severity: high
+    message: "spring-boot-devtools in production — auto-restart and live reload. Exclude from production build."
+    metadata:
+      cwe: CWE-489
+
+  # =========================================================================
+  # 27. KOTLIN NULL SAFETY (for Kotlin files)
+  # =========================================================================
+  - id: kotlin-force-unwrap
+    pattern: '!!'
+    severity: medium
+    message: "Kotlin !! (force unwrap) — will throw NullPointerException. Use safe call ?. or ?: instead."
+    metadata:
+      cwe: CWE-476
+  - id: kotlin-lateinit-no-check
+    pattern: 'lateinit\s+var'
+    severity: low
+    message: "lateinit var — accessing before initialization throws UninitializedPropertyAccessException. Use ::property.isInitialized check."
+    metadata:
+      cwe: CWE-476
+
+  # =========================================================================
+  # 28. SPRING ACTUATOR EXPOSURE
+  # =========================================================================
+  - id: actuator-all-endpoints-exposed
+    pattern: 'management\.endpoints\.web\.exposure\.include\s*=\s*\*'
+    severity: critical
+    message: "All Actuator endpoints exposed — /env, /heapdump, /shutdown accessible. Expose only /health, /info."
+    metadata:
+      cwe: CWE-200
+  - id: actuator-shutdown-enabled
+    pattern: 'management\.endpoint\.shutdown\.enabled\s*=\s*true'
+    severity: critical
+    message: "Actuator /shutdown enabled — allows remote shutdown. Disable in production."
+    metadata:
+      cwe: CWE-489
+  - id: actuator-no-auth
+    pattern: 'management\.endpoints\.web\.exposure\.include\s*=\s*[''"]env'
+    severity: high
+    message: "Actuator /env endpoint exposed — may leak secrets and config. Secure with Spring Security."
+    metadata:
+      cwe: CWE-200
+
+  # =========================================================================
+  # 29. HTTP RESPONSE SECURITY
+  # =========================================================================
+  - id: response-no-security-headers
+    pattern: '@Configuration.*\n.*WebSecurityConfigurerAdapter|SecurityFilterChain'
+    severity: info
+    message: "Security config — verify X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security headers are set."
+    metadata:
+      cwe: CWE-693
+  - id: response-body-error-detail
+    pattern: 'return\s+ResponseEntity.*status\(HttpStatus\.(?:INTERNAL_SERVER_ERROR|BAD_REQUEST)\).*body\s*\(\s*[''"]'
+    severity: medium
+    message: "Error response with hardcoded message — may leak implementation details. Use ProblemDetail (RFC 7807)."
+    metadata:
+      cwe: CWE-209
+  - id: response-raw-exception-message
+    pattern: 'return\s+e\.getMessage\s*\(\s*\)|return\s+ex\.getMessage\s*\(\s*\)'
+    severity: high
+    message: "Returning exception message to client — may leak stack traces or SQL errors. Return generic error message."
+    metadata:
+      cwe: CWE-209
+
+  # =========================================================================
+  # 30. DATABASE CONNECTION POOL
+  # =========================================================================
+  - id: dbcp-no-max-lifetime
+    pattern: 'spring\.datasource\.hikari\.maximum-pool-size\s*='
+    severity: info
+    message: "HikariCP pool configured — verify max-lifetime is set (shorter than DB timeout) to prevent stale connections."
+    metadata:
+      cwe: CWE-754
+  - id: dbcp-driver-manager-direct
+    pattern: 'DriverManager\.getConnection\s*\('
+    severity: high
+    message: "DriverManager.getConnection() — no connection pooling. Use DataSource/HikariCP for connection reuse."
+    metadata:
+      cwe: CWE-400
+  - id: dbcp-no-leak-detection
+    pattern: 'spring\.datasource\.hikari\.leak-detection-threshold\s*='
+    severity: info
+    message: "HikariCP — verify leak-detection-threshold is set (e.g. 60000ms) to catch connection leaks."
+    metadata:
+      cwe: CWE-401

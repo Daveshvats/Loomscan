@@ -162,7 +162,7 @@ class L0dBehavioral(LayerBase):
                     rule_id="L0d.knowledge_drift",
                     message=f"Knowledge drift: original author '{original_author}' contributed {ratio:.0%} of {total} changes — bus factor risk",
                     file=f, start_line=1,
-                    severity=Severity.LOW, confidence=0.6,
+                    severity=Severity.INFO, confidence=0.6,  # v5.21: Was LOW, changed to INFO
                     blast_radius=BlastRadius.MODULE, exploitability=0.0,
                     cwe="CWE-1058",
                     fix_suggestion="Pair-program changes to this file; document architecture decisions",
@@ -196,7 +196,7 @@ class L0dBehavioral(LayerBase):
                     rule_id="L0d.growing_complexity",
                     message=f"Complexity growing: was CC={old_cc}, now CC={new_cc} (+{int((new_cc/old_cc - 1)*100)}%)",
                     file=f, start_line=1,
-                    severity=Severity.LOW, confidence=0.65,
+                    severity=Severity.INFO, confidence=0.65,  # v5.21: Was LOW, changed to INFO
                     blast_radius=BlastRadius.MODULE, exploitability=0.0,
                     cwe="CWE-1058",
                     fix_suggestion="Refactor before adding more features — pay down technical debt",

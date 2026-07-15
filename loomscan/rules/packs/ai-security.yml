@@ -1,0 +1,78 @@
+# =============================================================================
+# LoomScan AI/LLM Security Rule Pack (v6.1)
+# Catches prompt injection, unrestricted tool use, and LLM-specific risks
+# =============================================================================
+
+rules:
+- id: llm-prompt-injection-concat
+  pattern: '(?:prompt|message|instruction|system_prompt|user_prompt)\s*[\+=].*(?:request|input|user|query|req\.|body|params)'
+  severity: high
+  message: "LLM prompt injection: user input concatenated into prompt. Use structured prompts with input separation."
+  metadata:
+    cwe: CWE-1039
+- id: llm-prompt-injection-fstring
+  pattern: 'f[''"].*\{.*(?:request|input|user|query|req\.|body|params).*\}.*[''"]'
+  severity: high
+  message: "LLM prompt injection: user input in f-string prompt. Separate system instructions from user input."
+  metadata:
+    cwe: CWE-1039
+- id: llm-unrestricted-tool-use-exec
+  pattern: 'tools\s*=\s*\[.*(?:exec|eval|system|subprocess|Runtime\.exec|child_process)'
+  severity: critical
+  message: "LLM tool use includes code execution — prompt injection can trigger arbitrary code execution. Remove code execution tools."
+  metadata:
+    cwe: CWE-94
+- id: llm-unrestricted-tool-use-file
+  pattern: 'tools\s*=\s*\[.*(?:readFile|writeFile|open|File\(|FileReader|FileWriter)'
+  severity: high
+  message: "LLM tool use includes file operations — prompt injection can read/write arbitrary files. Restrict file access paths."
+  metadata:
+    cwe: CWE-73
+- id: llm-unrestricted-tool-use-network
+  pattern: 'tools\s*=\s*\[.*(?:fetch|requests\.|http\.|urllib|curl|axios)'
+  severity: high
+  message: "LLM tool use includes network access — prompt injection can exfiltrate data. Restrict allowed URLs."
+  metadata:
+    cwe: CWE-918
+- id: llm-no-input-validation
+  pattern: '(?:openai|anthropic|cohere|llama|ollama)\..*create.*(?:messages|prompt)\s*:\s*\[?\s*(?:request|input|user|body)'
+  severity: high
+  message: "LLM API called with raw user input — no prompt injection filtering. Add input sanitization layer."
+  metadata:
+    cwe: CWE-20
+- id: llm-response-not-validated
+  pattern: '(?:response|completion|result)\.(?:content|text|choices|output)'
+  severity: medium
+  message: "LLM response used without validation — may contain injected instructions or malicious content. Validate/sanitize before use."
+  metadata:
+    cwe: CWE-20
+- id: llm-api-key-hardcoded
+  pattern: '(?:OPENAI_API_KEY|ANTHROPIC_API_KEY|COHERE_API_KEY|HUGGINGFACE_TOKEN)\s*=\s*[''"][a-zA-Z0-9_-]{20,}'
+  severity: critical
+  message: "LLM API key hardcoded in source — load from environment variable instead."
+  metadata:
+    cwe: CWE-798
+- id: llm-system-prompt-from-user
+  pattern: 'role\s*:\s*[''"]system[''"].*(?:request|input|user|body|params|query)'
+  severity: critical
+  message: "System prompt contains user input — attacker can override system instructions. Never put user input in system role."
+  metadata:
+    cwe: CWE-1039
+- id: llm-no-max-tokens
+  pattern: '(?:openai|anthropic|client)\..*create\s*\(\s*(?!.*max_tokens|.*maxTokens)'
+  severity: medium
+  message: "LLM call without max_tokens — unbounded response can cause DoS or cost overrun. Always set max_tokens."
+  metadata:
+    cwe: CWE-400
+- id: llm-log-full-prompt
+  pattern: 'log(?:ger)?\..*(?:prompt|messages|system_prompt|instructions)'
+  severity: medium
+  message: "Logging full LLM prompt — may expose system instructions or sensitive data in logs. Log only metadata."
+  metadata:
+    cwe: CWE-532
+- id: llm-temperature-too-high
+  pattern: 'temperature\s*:\s*(?:1\.\d|2\.0|[2-9]\.0)'
+  severity: low
+  message: "LLM temperature > 1.0 — increases hallucination and unpredictable output. Use 0.0-1.0 for production."
+  metadata:
+    cwe: CWE-1041

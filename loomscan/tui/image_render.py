@@ -119,7 +119,7 @@ def _iterm2_encode_image(image_path: str, width: Optional[int] = None,
     if height is not None:
         args += f";height={height}px"
     
-    return f"\x1b]1337;File=inline=1{name_with_size(data)}{args}:{b64}\x07"
+    return f"\x1b]1337;File=inline=1{_name_with_size(data)}{args}:{b64}\x07"
 
 
 def _iterm2_clear_image() -> str:
