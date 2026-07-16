@@ -59,8 +59,10 @@ HOTSPOT_PATTERNS = {
         ("pickle.load", "deserialize", "Pickle deserialization — verify source is trusted"),
         ("pickle.loads", "deserialize", "Pickle deserialization — verify source is trusted"),
         ("yaml.load", "deserialize", "yaml.load — verify SafeLoader is used"),
-        ("eval", "code_injection", "eval() — verify input is not user-controlled"),
-        ("exec", "code_injection", "exec() — verify input is not user-controlled"),
+        # v7.3.2: Use "eval(" instead of bare "eval" to avoid matching evaluate/evaluator/retrieval
+        ("eval(", "code_injection", "eval() — verify input is not user-controlled"),
+        # v7.3.2: Use "exec(" instead of bare "exec" to avoid matching conn.execute()/cursor.execute()
+        ("exec(", "code_injection", "exec() — verify input is not user-controlled"),
         ("jwt.decode", "auth", "JWT decode — verify algorithm is not 'none'"),
         ("requests.get", "ssrf", "HTTP request — verify URL is not user-controlled"),
         ("requests.post", "ssrf", "HTTP request — verify URL is not user-controlled"),

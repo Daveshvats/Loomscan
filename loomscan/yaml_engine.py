@@ -50,6 +50,9 @@ _logger = logging.getLogger("loomscan.yaml_engine")
 _RUST_ENGINE = None
 _RUST_ENGINE_CHECKED = False
 
+# v7.2: Cache for compiled regex patterns — avoids recompiling on every file
+_COMPILED_REGEX_CACHE: dict = {}
+
 
 def _get_rust_engine():
     """Return a cached Rust RegexEngine instance, or None if unavailable.
@@ -253,11 +256,9 @@ def apply_pack_to_file(pack_path: Path, file_path: Path,
         if not pattern_str:
             continue
 
-        # Compile the regex
+        # Compile the regex (v7.2: cached by pattern+flags to avoid recompiling)
         try:
-            # Check if the rule specifies case-insensitive
             flags = 0
-            # Some YAML packs use /pattern/flags syntax
             if pattern_str.startswith("/") and "/" in pattern_str[1:]:
                 last_slash = pattern_str.rfind("/")
                 if last_slash > 0:
@@ -265,7 +266,13 @@ def apply_pack_to_file(pack_path: Path, file_path: Path,
                     pattern_str = pattern_str[1:last_slash]
                     if "i" in flag_str:
                         flags |= re.IGNORECASE
-            regex = re.compile(pattern_str, flags)
+            # v7.2: Use cache to avoid recompiling the same pattern on every file
+            cache_key = (pattern_str, flags)
+            if cache_key in _COMPILED_REGEX_CACHE:
+                regex = _COMPILED_REGEX_CACHE[cache_key]
+            else:
+                regex = re.compile(pattern_str, flags)
+                _COMPILED_REGEX_CACHE[cache_key] = regex
         except re.error as e:
             _logger.debug(f"Rule {rule_id}: invalid regex '{pattern_str}': {e}")
             continue

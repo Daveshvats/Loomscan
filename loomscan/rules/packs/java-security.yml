@@ -1,7 +1,7 @@
 rules:
 - id: java-runtime-exec
   pattern: Runtime.getRuntime().exec(...)
-  message: "Runtime.exec \u2014 command injection risk"
+  message: Runtime.exec — command injection risk
   languages:
   - java
   severity: ERROR
@@ -10,7 +10,7 @@ rules:
     owasp: A03
 - id: java-process-builder
   pattern: new ProcessBuilder(...).start()
-  message: "ProcessBuilder \u2014 verify inputs are not user-controlled"
+  message: ProcessBuilder — verify inputs are not user-controlled
   languages:
   - java
   severity: WARNING
@@ -18,7 +18,7 @@ rules:
     cwe: CWE-78
 - id: java-sql-string-concat
   pattern: $STMT.executeQuery("..." + $VAR + "...")
-  message: "SQL query with string concat \u2014 SQL injection risk"
+  message: SQL query with string concat — SQL injection risk
   languages:
   - java
   severity: ERROR
@@ -27,7 +27,7 @@ rules:
     owasp: A03
 - id: java-xml-external-entity
   pattern: DocumentBuilderFactory.newInstance()
-  message: "XXE risk \u2014 disable external entities"
+  message: XXE risk — disable external entities
   languages:
   - java
   severity: WARNING
@@ -36,7 +36,7 @@ rules:
     owasp: A05
 - id: java-objectinputstream
   pattern: new ObjectInputStream(...)
-  message: "Java deserialization \u2014 RCE risk"
+  message: Java deserialization — RCE risk
   languages:
   - java
   severity: ERROR
@@ -45,7 +45,7 @@ rules:
     owasp: A08
 - id: java-java-md5
   pattern: MessageDigest.getInstance("MD5")
-  message: "MD5 \u2014 cryptographically broken"
+  message: MD5 — cryptographically broken
   languages:
   - java
   severity: WARNING
@@ -53,16 +53,16 @@ rules:
     cwe: CWE-327
 - id: java-java-sha1
   pattern: MessageDigest.getInstance("SHA1")
-  message: "SHA1 \u2014 cryptographically broken"
+  message: SHA1 — cryptographically broken
   languages:
   - java
   severity: WARNING
   metadata:
     cwe: CWE-327
 - id: java-trust-all-certs
-  pattern: TrustManager[] { ... X509TrustManager ... getAcceptedIssuers() { return
+  pattern: TrustManager\[\] { ... X509TrustManager ... getAcceptedIssuers() { return
     null; } }
-  message: "TrustManager returns null \u2014 accepts all certificates, MITM risk"
+  message: TrustManager returns null — accepts all certificates, MITM risk
   languages:
   - java
   severity: ERROR
@@ -80,7 +80,7 @@ rules:
     owasp: A07
 - id: java-java-print-stacktrace
   pattern: $E.printStackTrace()
-  message: "printStackTrace leaks info \u2014 use proper logging"
+  message: printStackTrace leaks info — use proper logging
   languages:
   - java
   severity: INFO
@@ -88,7 +88,7 @@ rules:
     cwe: CWE-209
 - id: java-java-thread-sleep-in-loop
   pattern: "while (...) {\n    Thread.sleep(...);\n}\n"
-  message: "Thread.sleep in loop \u2014 likely a busy-wait, use wait/notify"
+  message: Thread.sleep in loop — likely a busy-wait, use wait/notify
   languages:
   - java
   severity: WARNING

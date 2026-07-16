@@ -1,8 +1,7 @@
 rules:
 - id: spring-controller-no-auth
   pattern: '@RequestMapping($PATH)'
-  message: "Spring @RequestMapping \u2014 verify @PreAuthorize or @Secured if route\
-    \ is protected"
+  message: Spring @RequestMapping — verify @PreAuthorize or @Secured if route is protected
   languages:
   - java
   severity: INFO
@@ -10,15 +9,15 @@ rules:
     cwe: CWE-862
 - id: spring-csrf-disabled
   pattern: http.csrf().disable()
-  message: "Spring CSRF disabled \u2014 verify API-only app or add CSRF token"
+  message: Spring CSRF disabled — verify API-only app or add CSRF token
   languages:
   - java
   severity: WARNING
   metadata:
     cwe: CWE-352
 - id: spring-permit-all
-  pattern: antMatchers("/**").permitAll()
-  message: "Spring Security permitAll on /** \u2014 no auth"
+  pattern: antMatchers("/.*").permitAll()
+  message: Spring Security permitAll on /** — no auth
   languages:
   - java
   severity: ERROR
@@ -26,7 +25,7 @@ rules:
     cwe: CWE-862
 - id: spring-actuator-exposed
   pattern: management.endpoints.web.exposure.include=*
-  message: "Spring Actuator endpoints exposed \u2014 may leak sensitive info"
+  message: Spring Actuator endpoints exposed — may leak sensitive info
   languages:
   - java
   severity: WARNING
@@ -34,7 +33,7 @@ rules:
     cwe: CWE-200
 - id: spring-redirect-user-input
   pattern: return "redirect:" + $URL
-  message: "Spring redirect \u2014 open redirect if $URL is user-controlled"
+  message: Spring redirect — open redirect if $URL is user-controlled
   languages:
   - java
   severity: WARNING
@@ -42,7 +41,7 @@ rules:
     cwe: CWE-601
 - id: jpa-query-string-concat
   pattern: entityManager.createQuery("..." + $VAR)
-  message: "JPA query with string concat \u2014 JPQL injection"
+  message: JPA query with string concat — JPQL injection
   languages:
   - java
   severity: ERROR
@@ -50,7 +49,7 @@ rules:
     cwe: CWE-89
 - id: jpa-native-query-string
   pattern: entityManager.createNativeQuery("..." + $VAR)
-  message: "JPA native query with string concat \u2014 SQL injection"
+  message: JPA native query with string concat — SQL injection
   languages:
   - java
   severity: ERROR
@@ -58,7 +57,7 @@ rules:
     cwe: CWE-89
 - id: hibernate-hql-string
   pattern: session.createQuery("..." + $VAR)
-  message: "Hibernate HQL with string concat \u2014 HQL injection"
+  message: Hibernate HQL with string concat — HQL injection
   languages:
   - java
   severity: ERROR
@@ -66,7 +65,7 @@ rules:
     cwe: CWE-89
 - id: jdbc-statement-execute
   pattern: $STMT.executeQuery("..." + $VAR)
-  message: "JDBC Statement (not PreparedStatement) \u2014 SQL injection"
+  message: JDBC Statement (not PreparedStatement) — SQL injection
   languages:
   - java
   severity: ERROR
@@ -74,7 +73,7 @@ rules:
     cwe: CWE-89
 - id: java-frameworks-objectinputstream
   pattern: new ObjectInputStream(...)
-  message: "Java deserialization \u2014 RCE risk"
+  message: Java deserialization — RCE risk
   languages:
   - java
   severity: ERROR
@@ -82,7 +81,7 @@ rules:
     cwe: CWE-502
 - id: jackson-default-typing
   pattern: enableDefaultTyping()
-  message: "Jackson default typing enabled \u2014 polymorphic deserialization RCE"
+  message: Jackson default typing enabled — polymorphic deserialization RCE
   languages:
   - java
   severity: ERROR
@@ -90,7 +89,7 @@ rules:
     cwe: CWE-502
 - id: xstream-from-xml
   pattern: new XStream().fromXML(...)
-  message: "XStream fromXML \u2014 deserialization RCE risk"
+  message: XStream fromXML — deserialization RCE risk
   languages:
   - java
   severity: ERROR
@@ -98,7 +97,7 @@ rules:
     cwe: CWE-502
 - id: java-documentbuilderfactory-xxe
   pattern: DocumentBuilderFactory.newInstance()
-  message: "DocumentBuilderFactory \u2014 disable external entities (XXE)"
+  message: DocumentBuilderFactory — disable external entities (XXE)
   languages:
   - java
   severity: WARNING
@@ -106,7 +105,7 @@ rules:
     cwe: CWE-611
 - id: java-saxparserfactory-xxe
   pattern: SAXParserFactory.newInstance()
-  message: "SAXParserFactory \u2014 disable external entities (XXE)"
+  message: SAXParserFactory — disable external entities (XXE)
   languages:
   - java
   severity: WARNING
@@ -114,7 +113,7 @@ rules:
     cwe: CWE-611
 - id: java-md5
   pattern: MessageDigest.getInstance("MD5")
-  message: "MD5 \u2014 broken for security"
+  message: MD5 — broken for security
   languages:
   - java
   severity: WARNING
@@ -122,7 +121,7 @@ rules:
     cwe: CWE-327
 - id: java-sha1
   pattern: MessageDigest.getInstance("SHA1")
-  message: "SHA1 \u2014 broken for security"
+  message: SHA1 — broken for security
   languages:
   - java
   severity: WARNING
@@ -130,15 +129,15 @@ rules:
     cwe: CWE-327
 - id: java-cipher-ecb
   pattern: Cipher.getInstance("AES/ECB/...")
-  message: "AES ECB mode \u2014 penguin pattern, use GCM"
+  message: AES ECB mode — penguin pattern, use GCM
   languages:
   - java
   severity: ERROR
   metadata:
     cwe: CWE-327
 - id: java-ssl-trust-all
-  pattern: TrustManager[] { ... getAcceptedIssuers() { return null; } }
-  message: "TrustManager returns null \u2014 accepts all certs (MITM)"
+  pattern: TrustManager\[\] { ... getAcceptedIssuers() { return null; } }
+  message: TrustManager returns null — accepts all certs (MITM)
   languages:
   - java
   severity: ERROR
@@ -146,7 +145,7 @@ rules:
     cwe: CWE-295
 - id: java-hostname-verifier-all
   pattern: new HostnameVerifier() { ... return true; }
-  message: "HostnameVerifier always returns true \u2014 MITM"
+  message: HostnameVerifier always returns true — MITM
   languages:
   - java
   severity: ERROR
@@ -154,7 +153,7 @@ rules:
     cwe: CWE-295
 - id: java-thread-sleep-in-loop
   pattern: "while (...) {\n    Thread.sleep(...);\n}\n"
-  message: "Thread.sleep in loop \u2014 busy wait, use wait/notify"
+  message: Thread.sleep in loop — busy wait, use wait/notify
   languages:
   - java
   severity: WARNING
@@ -162,7 +161,7 @@ rules:
     cwe: CWE-1124
 - id: java-synchronized-this
   pattern: synchronized(this)
-  message: "synchronized(this) \u2014 prefer private final lock object"
+  message: synchronized(this) — prefer private final lock object
   languages:
   - java
   severity: INFO
@@ -171,7 +170,7 @@ rules:
 - id: java-double-checked-locking
   pattern: "if ($X == null) {\n    synchronized(...) {\n        if ($X == null) {\n\
     \            $X = ...;\n        }\n    }\n}\n"
-  message: "Double-checked locking \u2014 verify $X is volatile"
+  message: Double-checked locking — verify $X is volatile
   languages:
   - java
   severity: WARNING
@@ -180,7 +179,7 @@ rules:
 - id: java-finally-close
   pattern: "try {\n    $RESOURCE = ...;\n} catch (...) {\n} finally {\n    $RESOURCE.close();\n\
     }\n"
-  message: "Manual close in finally \u2014 use try-with-resources"
+  message: Manual close in finally — use try-with-resources
   languages:
   - java
   severity: INFO
@@ -188,7 +187,7 @@ rules:
     cwe: CWE-404
 - id: java-print-stacktrace
   pattern: $E.printStackTrace()
-  message: "printStackTrace \u2014 use proper logging"
+  message: printStackTrace — use proper logging
   languages:
   - java
   severity: INFO
@@ -196,7 +195,7 @@ rules:
     cwe: CWE-209
 - id: java-system-out-println
   pattern: System.out.println(...)
-  message: "System.out.println \u2014 use proper logging"
+  message: System.out.println — use proper logging
   languages:
   - java
   severity: INFO

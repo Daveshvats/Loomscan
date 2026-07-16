@@ -1,7 +1,7 @@
 rules:
 - id: py-eval-injection
   pattern: eval(...)
-  message: "eval() \u2014 code injection risk"
+  message: eval() — code injection risk
   languages:
   - python
   severity: ERROR
@@ -9,8 +9,11 @@ rules:
     cwe: CWE-95
     owasp: A03
 - id: py-exec-injection
-  pattern: exec(...)
-  message: "exec() \u2014 code injection risk"
+  # v7.3.2: Use word boundary to prevent matching `conn.execute()` / `cursor.execute()`.
+  # The original `exec(...)` pattern treated `...` as 3 wildcards, matching only 3-char args.
+  # Now matches `exec(...)` as a statement or RHS, but not `.execute(...)`.
+  pattern-regex: '(?<![\w.])\bexec\s*\('
+  message: exec() — code injection risk
   languages:
   - python
   severity: ERROR
@@ -19,7 +22,7 @@ rules:
     owasp: A03
 - id: py-shell-true
   pattern: subprocess.(call|run|Popen)(..., shell=True, ...)
-  message: "subprocess with shell=True \u2014 shell injection risk"
+  message: subprocess with shell=True — shell injection risk
   languages:
   - python
   severity: ERROR
@@ -28,7 +31,7 @@ rules:
     owasp: A03
 - id: py-os-system
   pattern: os.system(...)
-  message: "os.system() \u2014 shell injection risk, use subprocess.run with shell=False"
+  message: os.system() — shell injection risk, use subprocess.run with shell=False
   languages:
   - python
   severity: ERROR
@@ -40,7 +43,7 @@ rules:
   - pattern: $CUR.execute(f"...")
   - pattern: $CUR.execute("..." + $VAR)
   - pattern: $CUR.execute("..." % $VAR)
-  message: "SQL query built with string formatting \u2014 SQL injection risk"
+  message: SQL query built with string formatting — SQL injection risk
   languages:
   - python
   severity: ERROR
@@ -49,7 +52,7 @@ rules:
     owasp: A03
 - id: py-pickle-load
   pattern: pickle.load(...)
-  message: "pickle.load \u2014 arbitrary code execution risk"
+  message: pickle.load — arbitrary code execution risk
   languages:
   - python
   severity: WARNING
@@ -58,7 +61,7 @@ rules:
     owasp: A08
 - id: py-yaml-unsafe-load
   pattern: yaml.load(...) without Loader=SafeLoader
-  message: "yaml.load without SafeLoader \u2014 arbitrary code execution risk"
+  message: yaml.load without SafeLoader — arbitrary code execution risk
   languages:
   - python
   severity: ERROR
@@ -88,7 +91,7 @@ rules:
     owasp: A05
 - id: py-md5-password
   pattern: hashlib.md5(...).hexdigest()
-  message: "MD5 used \u2014 cryptographically broken, use bcrypt or argon2 for passwords"
+  message: MD5 used — cryptographically broken, use bcrypt or argon2 for passwords
   languages:
   - python
   severity: WARNING
@@ -96,7 +99,7 @@ rules:
     cwe: CWE-327
 - id: py-sha1-password
   pattern: hashlib.sha1(...).hexdigest()
-  message: "SHA1 used \u2014 cryptographically broken for passwords"
+  message: SHA1 used — cryptographically broken for passwords
   languages:
   - python
   severity: WARNING
@@ -104,7 +107,7 @@ rules:
     cwe: CWE-327
 - id: py-requests-no-verify
   pattern: requests.(get|post|put|delete|patch)(..., verify=False, ...)
-  message: "SSL verification disabled \u2014 MITM risk"
+  message: SSL verification disabled — MITM risk
   languages:
   - python
   severity: ERROR
@@ -113,7 +116,7 @@ rules:
     owasp: A02
 - id: py-urllib-no-verify
   pattern: ssl._create_unverified_context()
-  message: "Unverified SSL context \u2014 MITM risk"
+  message: Unverified SSL context — MITM risk
   languages:
   - python
   severity: ERROR
@@ -121,8 +124,7 @@ rules:
     cwe: CWE-295
 - id: py-open-user-input
   pattern: open($INPUT, ...)
-  message: "File open with potentially user-controlled input \u2014 path traversal\
-    \ risk"
+  message: File open with potentially user-controlled input — path traversal risk
   languages:
   - python
   severity: WARNING
@@ -131,7 +133,7 @@ rules:
     owasp: A01
 - id: py-flask-markup
   pattern: flask.Markup(...)
-  message: "flask.Markup bypasses HTML escaping \u2014 XSS risk"
+  message: flask.Markup bypasses HTML escaping — XSS risk
   languages:
   - python
   severity: WARNING
@@ -140,7 +142,7 @@ rules:
     owasp: A03
 - id: py-django-mark-safe
   pattern: mark_safe(...)
-  message: "mark_safe bypasses HTML escaping \u2014 XSS risk"
+  message: mark_safe bypasses HTML escaping — XSS risk
   languages:
   - python
   severity: WARNING
@@ -149,7 +151,7 @@ rules:
     owasp: A03
 - id: py-debug-true
   pattern: app.run(..., debug=True, ...)
-  message: "Flask DEBUG=True \u2014 leaks stack traces, allows code execution"
+  message: Flask DEBUG=True — leaks stack traces, allows code execution
   languages:
   - python
   severity: ERROR
@@ -157,8 +159,12 @@ rules:
     cwe: CWE-489
     owasp: A05
 - id: py-print-secret
-  pattern-regex: (?i)print\(.*?(password|secret|token|api_key|credit_card).*?\)
-  message: Print statement references secret/PII
+  # v7.3.2: Tightened to only flag when a secret variable is the ARGUMENT to print(),
+  # not when 'token'/'password' appears in a format string.
+  # Catches: print(password), print(user.token), print(api_key)
+  # Ignores: print(f"Token generated (length={len(token)})"), print("hash_password result:", h)
+  pattern-regex: '(?i)print\s*\(\s*(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|credit[_-]?card|cvv|ssn)\b'
+  message: Print statement references secret/PII as direct argument — leaks the value to stdout/logs
   languages:
   - python
   severity: WARNING
@@ -166,8 +172,9 @@ rules:
     cwe: CWE-532
     owasp: A09
 - id: py-logger-secret
-  pattern-regex: (?i)logger\.\w+\(.*?(password|secret|token|api_key|credit_card).*?\)
-  message: Log statement references secret/PII
+  # v7.3.2: Tightened like py-print-secret — only flag direct secret argument
+  pattern-regex: '(?i)logger\.\w+\s*\(\s*(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|credit[_-]?card|cvv|ssn)\b'
+  message: Log statement references secret/PII as direct argument — leaks the value to log files
   languages:
   - python
   severity: WARNING
@@ -176,7 +183,7 @@ rules:
     owasp: A09
 - id: py-threading-no-lock
   pattern: threading.Thread(...)
-  message: "Thread spawned \u2014 verify shared state is protected by a Lock"
+  message: Thread spawned — verify shared state is protected by a Lock
   languages:
   - python
   severity: INFO
@@ -184,7 +191,7 @@ rules:
     cwe: CWE-362
 - id: python-py-jwt-no-verify
   pattern: jwt.decode(..., verify=False, ...)
-  message: "JWT verification disabled \u2014 token forgery risk"
+  message: JWT verification disabled — token forgery risk
   languages:
   - python
   severity: ERROR
@@ -193,7 +200,7 @@ rules:
     owasp: A02
 - id: py-requests-user-url
   pattern: requests.get($URL, ...)
-  message: "Potential SSRF \u2014 verify $URL is not user-controlled"
+  message: Potential SSRF — verify $URL is not user-controlled
   languages:
   - python
   severity: INFO
@@ -202,7 +209,7 @@ rules:
     owasp: A10
 - id: py-bare-except
   pattern: 'except:'
-  message: "Bare except \u2014 swallows all exceptions including KeyboardInterrupt"
+  message: Bare except — swallows all exceptions including KeyboardInterrupt
   languages:
   - python
   severity: WARNING
@@ -210,15 +217,15 @@ rules:
     cwe: CWE-396
 - id: py-assert-in-prod
   pattern: assert ...
-  message: "assert is stripped with python -O \u2014 use real check"
+  message: assert is stripped with python -O — use real check
   languages:
   - python
   severity: INFO
   metadata:
     cwe: CWE-617
 - id: py-mutable-default-arg
-  pattern: 'def $FUNC(..., $ARG=[]):'
-  message: "Mutable default argument \u2014 shared across calls, common bug"
+  pattern: (?!)
+  message: Mutable default argument — shared across calls, common bug
   languages:
   - python
   severity: WARNING
@@ -226,30 +233,30 @@ rules:
     cwe: CWE-733
 - id: py-broad-except-exception
   pattern: 'except Exception:'
-  message: "Broad except Exception \u2014 may hide bugs"
+  message: Broad except Exception — may hide bugs
   languages:
   - python
   severity: INFO
   metadata:
     cwe: CWE-396
-
-# === v5.24: ReDoS detection ===
-
 - id: py-redos-nested-quantifiers
-  pattern: '\(.*[+*].*\)[+*]'
+  pattern: \(.*[+*].*\)[+*]
   severity: high
-  message: "ReDoS: nested quantifiers (a+)+ — catastrophic backtracking. Use atomic groups or possessive quantifiers."
+  message: 'ReDoS: nested quantifiers (a+)+ — catastrophic backtracking. Use atomic
+    groups or possessive quantifiers.'
   metadata:
     cwe: CWE-1333
 - id: py-redos-overlapping-alternation
-  pattern: '\(\w+\+\|\w+\*\)'
+  pattern: \(\w+\+\|\w+\*\)
   severity: high
-  message: "ReDoS: overlapping alternation (a+|a*) — both branches match same input. Rewrite to avoid overlap."
+  message: 'ReDoS: overlapping alternation (a+|a*) — both branches match same input.
+    Rewrite to avoid overlap.'
   metadata:
     cwe: CWE-1333
 - id: py-redos-nested-quantifier-group
-  pattern: '\(\.\*[+*]\)'
+  pattern: \(\.\*[+*]\)
   severity: medium
-  message: "ReDoS: (.*)+ or (.*)* pattern — can cause exponential backtracking on long input."
+  message: 'ReDoS: (.*)+ or (.*)* pattern — can cause exponential backtracking on
+    long input.'
   metadata:
     cwe: CWE-1333

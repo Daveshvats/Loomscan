@@ -70,11 +70,35 @@ def _generate_html_template(result: PipelineResult, repo_root: Path,
             graph_nodes.add(f.cwe)
             graph_edges.append({"source": f.file, "target": f.cwe, "sev": f.severity.value if hasattr(f.severity, 'value') else str(f.severity)})
 
+    # v7.3.2: Cap findings embedded in HTML to prevent 150MB+ dashboards on big scans.
+    # The full findings are still in the JSON/SARIF reports; the HTML dashboard
+    # shows the first 5000 (sorted by severity) which is plenty for interactive use.
+    MAX_HTML_FINDINGS = 5000
+    if len(findings_data) > MAX_HTML_FINDINGS:
+        # Sort by severity (critical > high > medium > low > info) then by file:line
+        _sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+        findings_data_sorted = sorted(
+            findings_data,
+            key=lambda f: (_sev_order.get(f.get("severity", "info"), 4), f.get("file", ""), f.get("line", 0))
+        )
+        findings_data = findings_data_sorted[:MAX_HTML_FINDINGS]
+        findings_truncated = len(findings_data_sorted) - MAX_HTML_FINDINGS
+    else:
+        findings_truncated = 0
+
+    # v7.3.2: Use loomscan.__version__ instead of hardcoded "5.22.0"
+    try:
+        from .. import __version__ as loomscan_version
+    except ImportError:
+        loomscan_version = "unknown"
+
     scan_data = {
-        "version": "5.22.0",
+        "version": loomscan_version,
         "timestamp": datetime.now().isoformat(),
         "repo": str(repo_root),
         "total_findings": len(result.findings),
+        "html_findings_shown": len(findings_data),
+        "html_findings_truncated": findings_truncated,
         "decision": result.final_decision.value if hasattr(result.final_decision, 'value') else str(result.final_decision),
         "by_severity": by_sev,
         "findings": findings_data,

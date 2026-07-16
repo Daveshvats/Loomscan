@@ -383,14 +383,21 @@ rules:
   #     throw-in-finally, raw `throws Exception`)
   # =========================================================================
   - id: err-catch-return-swallow
-    pattern: 'catch\s*\([^)]*\)\s*\{\s*return\b'
+    # v7.3.2: Rewritten as single-line pattern. The YAML engine scans line-by-line,
+    # so this only fires when `catch (...) { return ...` is on the same line.
+    # The multi-line form `catch (E e) {\n return null;}` is caught by the BL-miner
+    # rule `bl.java.swallow_exception_return_null` (function-scoped, cross-line).
+    pattern: 'catch\s*\([^)]*\)\s*\{\s*return\s+(?:null|0|false|true|new\s|Collections\.emptyList|"")'
     severity: medium
-    message: "catch { return ... } swallows the exception and silently returns — masks failures (often returns null/0 causing downstream NPE). Log and rethrow or return a typed error."
+    message: "catch { return null/0/false } swallows the exception and silently returns — masks failures (often returns null causing downstream NPE). Log and rethrow or return a typed error."
     metadata:
       cwe: CWE-390
 
   - id: err-throw-in-finally
-    pattern: 'finally\s*\{[^}]*\bthrow\b'
+    # v7.3.2: rewritten as single-line pattern. The v7.3.1 rule `exc-finally-throws`
+    # covers the multi-line case via the BL-miner; this single-line rule catches
+    # the common form `finally { throw new ...(); }` on one line.
+    pattern: 'finally\s*\{[^}]*\bthrow\s+new\b'
     severity: medium
     message: "throw inside finally — suppresses the original exception from the try block, hiding the real cause. Never throw in finally."
     metadata:
@@ -496,7 +503,10 @@ rules:
     metadata:
       cwe: CWE-400
   - id: jpa-saveall-in-loop
-    pattern: 'for\s*\(.*\)\s*\{[^}]*\.save\s*\('
+    # v7.3.2: Rewritten as single-line pattern. The v7.3.1 rule `perf-save-in-loop-regex`
+    # covers the multi-line `for (...) { ... .save(x); }` case via BL-miner.
+    # This single-line rule catches the compact form: `for (X x : list) repo.save(x);`
+    pattern: 'for\s*\([^)]*\)\s*[^{;]*\.save\s*\('
     severity: medium
     message: "repository.save() inside a loop — N individual INSERTs. Use saveAll() for batch insert."
     metadata:
@@ -839,3 +849,1639 @@ rules:
     message: "HikariCP — verify leak-detection-threshold is set (e.g. 60000ms) to catch connection leaks."
     metadata:
       cwe: CWE-401
+
+  # =========================================================================
+  # 31. PRODUCTION-ERROR SOURCE DETECTION (v7.3)
+  #     Catches the 2 production errors that previously had NO source rule:
+  #       - "No enum constant" 500 error from unguarded enum.valueOf()
+  #       - 57-second timeout from synchronous blocking endpoints
+  # =========================================================================
+  - id: java-enum-valueof-without-validation
+    # v7.3.1: Simplified pattern — matches both `EnumType.valueOf(var)` AND `Enum.valueOf(Type.class, var)`.
+    # Excludes wrapper types (String/Integer/Long/etc.) which are NOT enums.
+    pattern: '(?:\b(?!String\b|Integer\b|Long\b|Double\b|Float\b|Boolean\b|Short\b|Byte\b|Character\b|BigInteger\b|BigDecimal\b|Optional\b|AtomicInteger\b|AtomicLong\b)[A-Z]\w*\.valueOf\s*\(\s*\w+\s*\)|\bEnum\.valueOf\s*\()'
+    severity: high
+    message: "Enum.valueOf() on user-controlled input — throws IllegalArgumentException ('No enum constant') when value is empty, misspelled, or 'undefined'. Validate with a Set/enum check, or use EnumUtils.getIfPresent() (Apache Commons) / Optional-returning helper."
+    metadata:
+      cwe: CWE-755
+      owasp: A05
+      production_error: enum_constant_500
+
+  - id: java-sync-blocking-endpoint-no-timeout
+    # v7.3.1: Broader pattern — fires on ANY @PostMapping/@PutMapping/@PatchMapping
+    # that has a URL path containing I/O-indicating keywords. Catches the common
+    # case of sync endpoints that do file upload / report generation / bulk import.
+    pattern: '@(?:Post|Put|Patch)Mapping\s*\(\s*[^)]*(?:multipart|file|upload|import|export|report|sync|generate|process|batch|bulk|convert|download|backup|restore|archive|render|compile|build|analyze|scan|aggregate|compute|calculate|crunch|etl|transform)\w*'
+    severity: medium
+    message: "Synchronous blocking endpoint (file upload/import/export/report) — blocks the request thread for the whole operation. Add @Async, configure server.tomcat.connection-timeout, or use CompletableFuture with orTimeout() to bound execution. Return 202 Accepted for long-running work."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+      production_error: 57s_timeout
+
+  - id: java-sync-endpoint-with-requestbody-no-async
+    # v7.3.1: Catches the generic case — @PostMapping/@PutMapping with @RequestBody,
+    # no @Async. This is the most common source of 57s timeouts in Spring apps.
+    pattern: '@(?:Post|Put|Patch)Mapping\b(?!.*@Async)'
+    severity: low
+    message: "Synchronous POST/PUT/PATCH endpoint without @Async — if this does I/O (DB, HTTP, file), it blocks the request thread. Consider @Async for long-running operations, or ensure server.tomcat.connection-timeout is bounded."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+      production_error: 57s_timeout
+
+  - id: java-multipart-endpoint-no-async
+    pattern: '@RequestParam\s+(?:MultipartFile|List\s*<\s*MultipartFile\s*>)\b'
+    severity: medium
+    message: "Multipart file upload endpoint — synchronous handling risks thread exhaustion and 57s+ timeouts under load. Push to a background queue (@Async, Spring Events, or external MQ) and return 202 Accepted."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+      production_error: 57s_timeout
+
+  - id: java-resttemplate-no-timeout
+    pattern: 'new\s+RestTemplate\s*\(\s*\)'
+    severity: high
+    message: "new RestTemplate() with no timeout — hangs forever if the downstream service stalls. Set connectTimeout and readTimeout, or use WebClient with .timeout()."
+    metadata:
+      cwe: CWE-400
+      production_error: 57s_timeout
+
+  - id: java-webclient-no-timeout
+    pattern: 'WebClient\.builder\s*\(\s*\)(?!.*\.timeout\s*\()'
+    severity: medium
+    message: "WebClient.builder() without .timeout() — no per-request timeout; downstream stalls propagate to clients. Add .clientConnector(ReactornettyClient...) with readTimeout."
+    metadata:
+      cwe: CWE-400
+      production_error: 57s_timeout
+
+  - id: java-httpclient-no-timeout
+    pattern: 'HttpClient\.newBuilder\s*\(\s*\)(?!.*\.connectTimeout\s*\()'
+    severity: medium
+    message: "HttpClient.newBuilder() without connectTimeout — no connect timeout, may hang on unreachable hosts. Add .connectTimeout(Duration.ofSeconds(5))."
+    metadata:
+      cwe: CWE-400
+      production_error: 57s_timeout
+
+  - id: java-thread-sleep-in-request
+    pattern: 'Thread\.sleep\s*\(\s*\d+\s*\)'
+    severity: high
+    message: "Thread.sleep() inside request handler — blocks the worker thread. Use ScheduledExecutor, reactor delay, or @Async. Never sleep in a synchronous request path."
+    metadata:
+      cwe: CWE-400
+      production_error: 57s_timeout
+
+  - id: java-jackson-coerce-empty-string-config
+    pattern: 'spring\.jackson\.coercion\s*='
+    severity: info
+    message: "Jackson CoercionConfig detected — verify empty-string coercion is configured for List/Map/Wrapper types to prevent 'Cannot coerce empty String' 500 errors."
+    metadata:
+      cwe: CWE-20
+      production_error: jackson_coerce_500
+
+  - id: java-uuid-fromstring-no-try
+    pattern: 'UUID\.fromString\s*\(\s*(?!["\w]+\s*")\s*\w+\s*\)'
+    severity: high
+    message: "UUID.fromString() on user input — throws IllegalArgumentException ('Invalid UUID string: undefined') when the frontend sends literal 'undefined' or null. Validate format with try/catch or a regex Pattern before parsing."
+    metadata:
+      cwe: CWE-755
+      owasp: A05
+      production_error: invalid_uuid_500
+
+  # =========================================================================
+  # 32. DB ANTI-PATTERNS — TRANSACTION MANAGEMENT (v7.3)
+  #     Catches unnecessary read-write transactions, wrong propagation,
+  #     missing rollbackFor, missing readOnly on query methods.
+  # =========================================================================
+  - id: perf-transactional-no-readonly
+    pattern: '@Transactional\s*\((?![^)]*\breadOnly\b)(?![^)]*\bPropagation\.REQUIRES_NEW\b)(?![^)]*\bPropagation\.NESTED\b)[^)]*\)'
+    severity: low
+    message: "@Transactional without readOnly=true — Hibernate does dirty checking on every managed entity. For query-only methods add readOnly=true to skip flushing and dirty-check overhead."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-transactional-bare-default
+    pattern: '@Transactional\s*$'
+    severity: low
+    message: "Bare @Transactional (default propagation REQUIRED, no readOnly) — opens a read-write tx even for simple SELECTs. Add readOnly=true on query methods."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-transactional-required-nested
+    pattern: '@Transactional\s*\(\s*[^)]*propagation\s*=\s*Propagation\.(?:REQUIRED|NESTED)\b'
+    severity: low
+    message: "@Transactional(propagation=REQUIRED/NESTED) — if called from another tx, joins the outer context (REQUIRED) or nests with savepoint (NESTED). Use REQUIRES_NEW only when you genuinely need a separate tx."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-transactional-no-rollbackfor
+    pattern: '@Transactional\s*\(\s*(?![^)]*\brollbackFor\b)(?![^)]*\bnoRollbackFor\b)[^)]*\)'
+    severity: info
+    message: "@Transactional without rollbackFor — by default Spring only rolls back on RuntimeExceptions. Checked exceptions (IOException, SQLException) will COMMIT. Add rollbackFor = Exception.class."
+    metadata:
+      cwe: CWE-755
+      owasp: A09
+
+  - id: perf-transactional-timeout-missing
+    pattern: '@Transactional\s*\(\s*(?![^)]*\btimeout\b)[^)]*\)'
+    severity: low
+    message: "@Transactional without timeout — long-running tx holds DB connection and row locks indefinitely. Add timeout = 30 (seconds) to bound transaction duration."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 33. DB ANTI-PATTERNS — QUERY INEFFICIENCY (v7.3)
+  #     Catches wasted queries, full-table loads, N+1 patterns, SELECT *.
+  # =========================================================================
+  - id: perf-db-read-unused-result
+    pattern: '^\s*(?:repository|repo|dao|em|entityManager)\.\w+\s*\([^)]*\)\s*;\s*$'
+    severity: medium
+    message: "DB query result discarded — repository/entityManager call as a statement, result not assigned. Remove the call or use the result. Wasted DB round-trip."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-findall-then-size
+    pattern: '\.findAll\s*\(\s*\)\s*\.\s*size\s*\(\s*\)'
+    severity: high
+    message: "findAll().size() — loads ALL entities into memory just to count them. Use repository.count() instead — single SQL COUNT(*) query, no entity hydration."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-findall-then-stream
+    pattern: '\.findAll\s*\(\s*\)\s*\.\s*stream\s*\(\s*\)'
+    severity: medium
+    message: "findAll().stream() — loads entire table into memory before streaming. Use @Query returning Stream<T> or jakarta.persistence.Query.getResultStream() for true DB-side streaming."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-findall-then-iterate-filter
+    pattern: '\.findAll\s*\(\s*\)\s*\.\s*(?:stream\s*\(\s*\)\s*\.\s*)?(?:filter|forEach|map)\s*\('
+    severity: medium
+    message: "findAll().filter()/forEach()/map() — loads entire table then filters in Java. Add a WHERE clause to the @Query / use findBy<Property>(...) derived query. Reduces DB I/O and memory."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-jpql-select-star
+    pattern: '@Query\s*\(\s*[^)]*SELECT\s+\*\s+FROM'
+    severity: medium
+    message: "@Query with SELECT * — fetches all columns including potentially large LOBs. Select only needed columns or use a DTO projection (SELECT new com.example.Dto(...))."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-native-query-select-star
+    pattern: 'createNativeQuery\s*\(\s*"[^"]*SELECT\s+\*\s+FROM'
+    severity: medium
+    message: "createNativeQuery with SELECT * — fetches all columns. Use explicit column list or a typed ResultMapper / @SqlResultSetMapping."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-jdbc-select-star
+    pattern: '(?:executeQuery|prepareStatement)\s*\(\s*"[^"]*SELECT\s+\*\s+FROM'
+    severity: medium
+    message: "JDBC SELECT * — fetches all columns including potentially large ones. List explicit columns to reduce network I/O and prevent schema-drift bugs."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-fetch-join-no-where
+    pattern: '@Query\s*\(\s*[^)]*JOIN\s+FETCH\b(?![^)]*\bWHERE\b)'
+    severity: medium
+    message: "JOIN FETCH without WHERE clause — loads the entire parent-child graph into memory. Add a WHERE predicate to bound the result set."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-count-then-findall
+    pattern: '\.count\s*\(\s*\)\s*(?:\(|[!=<>;].*)'
+    severity: low
+    message: "Potential count() then findAll() — if you check count() before fetching, you issue 2 queries instead of 1. Use a single query with .isEmpty() on the result list."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-exists-then-find
+    pattern: '\.existsById\s*\(\s*\w+\s*\)\s*(?:\|\||&&|[^;]{0,80}findById)'
+    severity: medium
+    message: "existsById() then findById() — 2 DB round-trips for the same check. Just call findById().orElseThrow(...) or findById().isPresent()."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 34. DB ANTI-PATTERNS — JPA / ENTITYMANAGER MISUSE (v7.3)
+  # =========================================================================
+  - id: perf-entitymanager-merge-new-entity
+    pattern: '\.merge\s*\(\s*new\s+\w+'
+    severity: medium
+    message: "em.merge(new Entity()) — merge() is for DETACHED entities, not new ones. Use em.persist() for new entities — merge() causes an extra SELECT+UPDATE."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-entitymanager-flush-manual
+    pattern: '\.flush\s*\(\s*\)'
+    severity: low
+    message: "Manual EntityManager.flush() — usually unnecessary with AUTO flush mode. Forces an extra DB round-trip. Only call flush() when you need an ID assigned before continuing."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-entitymanager-clear-in-tx
+    pattern: '\.clear\s*\(\s*\)'
+    severity: low
+    message: "EntityManager.clear() — detaches ALL managed entities. Any subsequent change won't be persisted. Rarely correct inside a transaction; usually you want detach() for a single entity."
+    metadata:
+      cwe: CWE-755
+
+  - id: perf-entitymanager-refresh-in-loop
+    pattern: 'for\s*\([^)]*\)[^{]*\{[^}]*\.refresh\s*\(\s*\w+\s*\)'
+    severity: medium
+    message: "em.refresh() inside a loop — N extra SELECT queries. Batch-load the data once instead of refreshing each entity."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-jpa-modifying-query-without-modifying
+    pattern: '@Query\s*\(\s*[^)]*\b(?:UPDATE|DELETE)\b[^)]*\)(?![^\n]*@Modifying)'
+    severity: high
+    message: "@Query with UPDATE/DELETE but no @Modifying annotation — JPA will execute as a SELECT and silently no-op the write. Add @Modifying annotation (and @Transactional)."
+    metadata:
+      cwe: CWE-755
+      owasp: A09
+
+  # =========================================================================
+  # 35. DB ANTI-PATTERNS — JPA ENTITY DESIGN (v7.3)
+  # =========================================================================
+  - id: perf-onetomany-no-mappedby
+    pattern: '@OneToMany\s*\((?![^)]*\bmappedBy\b)[^)]*\)'
+    severity: medium
+    message: "@OneToMany without mappedBy — JPA creates an extra join table (e.g., user_items) instead of using the FK column on the child. Add mappedBy = 'parent' on the @OneToMany side."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-elementcollection-no-fetch
+    pattern: '@ElementCollection\b(?![^)]*\bfetch\b)'
+    severity: medium
+    message: "@ElementCollection without explicit fetch — defaults to LAZY but commonly triggers N+1 when iterated. Set fetch=FetchType.LAZY explicitly and use JOIN FETCH in queries, or store as JSON."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-onetomany-default-mapkey
+    pattern: '@OneToMany\s*\((?![^)]*\b(?:mapedBy|MapKey|orderBy|fetch)\b)[^)]*\)'
+    severity: low
+    message: "@OneToMany collection without @OrderBy or @MapKey — elements loaded unordered, may cause inconsistent iteration. Add @OrderBy('field ASC') for deterministic ordering."
+    metadata:
+      cwe: CWE-755
+
+  - id: perf-column-no-length
+    pattern: '@Column\s*\(\s*name\s*=\s*"[^"]+"\s*\)(?![^\n]*length)'
+    severity: info
+    message: "@Column without length — defaults to 255 chars. For VARCHAR fields that may exceed 255 (descriptions, URLs, JSON), add length = N explicitly."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-lob-no-fetch-lazy
+    pattern: '@Lob\b(?![^)]*\bfetch\s*=\s*FetchType\.LAZY)'
+    severity: medium
+    message: "@Lob without fetch=LAZY — large objects (BLOB/CLOB) loaded eagerly into memory on every entity access. Set fetch=FetchType.LAZY and use JPQL DTO projection for lists."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 36. DB ANTI-PATTERNS — LOCKING & CONCURRENCY (v7.3)
+  # =========================================================================
+  - id: perf-pessimistic-lock-no-timeout
+    pattern: 'LockModeType\.PESSIMISTIC_(?:WRITE|READ|FORCE_INCREMENT)\b'
+    severity: medium
+    message: "Pessimistic lock (PESSIMISTIC_WRITE/READ) — verify javax.persistence.lock.timeout is set in properties. Without timeout, lock may block indefinitely and exhaust the connection pool."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-select-for-update-no-limit
+    pattern: '["'']SELECT\s+[^"'']*\s+FOR\s+UPDATE["'']'
+    severity: medium
+    message: "SELECT ... FOR UPDATE without WHERE/LIMIT — locks ALL matching rows. Add a WHERE predicate (typically by id) to minimize lock scope."
+    metadata:
+      cwe: CWE-662
+
+  - id: perf-version-no-optimistic-lock
+    pattern: '@Version\b'
+    severity: info
+    message: "@Version field detected — optimistic locking is enabled. Verify all update paths include the version check; otherwise OptimisticLockException may surface to clients."
+    metadata:
+      cwe: CWE-662
+
+  # =========================================================================
+  # 37. DB ANTI-PATTERNS — HIBERNATE-SPECIFIC (v7.3)
+  # =========================================================================
+  - id: perf-hibernate-session-load
+    pattern: '\.load\s*\(\s*\w+\.class\s*,'
+    severity: low
+    message: "session.load() returns a proxy and throws ObjectNotFoundException on access if the row doesn't exist. Use session.get() (returns null) unless you specifically need lazy proxy semantics."
+    metadata:
+      cwe: CWE-755
+
+  - id: perf-hibernate-criteria-list
+    pattern: 'createCriteria\s*\(\s*\w+\.class\s*\)\s*\.\s*list\s*\(\s*\)'
+    severity: low
+    message: "Hibernate Criteria.list() without restrictions — deprecated API and loads entire table. Use JPA Criteria API or @Query with WHERE predicate."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-hibernate-query-iterate
+    pattern: '\.iterate\s*\(\s*\)'
+    severity: medium
+    message: "Query.iterate() — issues N+1 SELECT queries (one per returned ID). Use .list() or .getResultList() for batch loading."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 38. DB ANTI-PATTERNS — CONNECTION & DATASOURCE (v7.3)
+  # =========================================================================
+  - id: perf-jdbctemplate-no-batchsize
+    pattern: 'new\s+JdbcTemplate\s*\(\s*\w+\s*\)(?![^\n]*setBatchSize)'
+    severity: info
+    message: "JdbcTemplate created without setting batch size — default may be 0 (no batching). Call setMaxRows/setFetchSize appropriately and use batchUpdate() for bulk inserts."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-statement-no-pool
+    pattern: 'createStatement\s*\(\s*\)'
+    severity: medium
+    message: "Statement created without ResultSet type/concurrency hints — defaults may be insensitive forward-only. For scrollable/updatable results use TYPE_SCROLL_INSENSITIVE, CONCUR_UPDATABLE."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-resultset-not-closed-try-with-resources
+    pattern: 'ResultSet\s+\w+\s*=\s*\w+\.executeQuery\s*\('
+    severity: medium
+    message: "ResultSet assigned outside try-with-resources — cursor leak risk. Wrap Statement/ResultSet in try-with-resources to guarantee close on exception."
+    metadata:
+      cwe: CWE-401
+      owasp: A09
+
+  # =========================================================================
+  # 39. DB ANTI-PATTERNS — SAVE PATTERNS (v7.3)
+  # =========================================================================
+  - id: perf-save-and-flush-unnecessary
+    pattern: '\.saveAndFlush\s*\('
+    severity: low
+    message: "saveAndFlush() — forces an immediate SQL INSERT/UPDATE, skipping the persistence-context batch. Use save() and let Hibernate flush at tx commit for batched JDBC writes."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-delete-then-insert
+    pattern: '\.delete\s*\([^)]*\)\s*;\s*\n?\s*\w+\.save\s*\(\s*new\s+'
+    severity: medium
+    message: "delete() followed by save(new ...) of same logical entity — uses 2 queries (DELETE+INSERT) instead of 1 UPDATE. Use merge() or update fields in place."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-save-in-loop-regex
+    pattern: 'for\s*\([^)]*\)\s*\{[^}]*\.\s*save\s*\(\s*\w+\s*\)'
+    severity: high
+    message: "save() inside a for-loop — N individual INSERT statements. Use saveAll(List) for a single batched JDBC insert, or use EntityManager.persist() with batch_size set."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: perf-update-set-no-where
+    pattern: '["'']UPDATE\s+\w+\s+SET[^"'']*(?:UPDATE|;)\s*["'']'
+    severity: high
+    message: "UPDATE without WHERE clause — updates every row in the table. Always include a WHERE predicate; otherwise data loss in production."
+    metadata:
+      cwe: CWE-1037
+      owasp: A01
+
+  - id: perf-delete-from-no-where
+    pattern: '["'']DELETE\s+FROM\s+\w+\s*["'']'
+    severity: critical
+    message: "DELETE FROM table with no WHERE clause — deletes ALL rows. Always include a WHERE predicate. Catastrophic data loss in production."
+    metadata:
+      cwe: CWE-1037
+      owasp: A01
+
+  # =========================================================================
+  # 40. DB ANTI-PATTERNS — CACHE MISUSE (v7.3)
+  # =========================================================================
+  - id: perf-cacheable-no-evict
+    pattern: '@Cacheable\s*\(\s*["''][^"'']+["'']\s*\)'
+    severity: info
+    message: "@Cacheable detected — verify a matching @CacheEvict exists on write methods (save/update/delete). Otherwise stale data served from cache indefinitely."
+    metadata:
+      cwe: CWE-755
+      owasp: A09
+
+  - id: perf-cacheable-all-entries
+    pattern: '@Cacheable\s*\(\s*["'']\*["'']'
+    severity: medium
+    message: "@Cacheable('*') — caches everything including per-request data. Cache only stable aggregates and use a key derived from method args."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 41. DB ANTI-PATTERNS — SCHEMA MIGRATION / DDL (v7.3)
+  # =========================================================================
+  - id: perf-hibernate-ddl-auto-update
+    pattern: 'spring\.jpa\.hibernate\.ddl-auto\s*=\s*(?:update|create|create-drop)'
+    severity: high
+    message: "spring.jpa.hibernate.ddl-auto=update/create/create-drop in production — Hibernate auto-creates/alters schema on startup. Use flyway/liquibase migrations; set ddl-auto=validate or none."
+    metadata:
+      cwe: CWE-755
+      owasp: A09
+
+  - id: perf-hibernate-show-sql-true
+    pattern: 'spring\.jpa\.show-sql\s*=\s*true'
+    severity: low
+    message: "spring.jpa.show-sql=true — System.out.println every SQL statement (not via logger). Significant overhead in production. Use logging.level.org.hibernate.SQL=DEBUG via logger instead."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-hibernate-format-sql-true
+    pattern: 'spring\.jpa\.properties\.hibernate\.format_sql\s*=\s*true'
+    severity: low
+    message: "hibernate.format_sql=true — pretty-prints every SQL statement. Significant CPU overhead in production. Set to false."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 42. DB ANTI-PATTERNS — INDEX & QUERY PLAN (v7.3)
+  # =========================================================================
+  - id: perf-jpa-query-like-leading-wildcard
+    pattern: '@Query\s*\(\s*[^)]*LIKE\s+[''"]%[^"'']+[''"]'
+    severity: medium
+    message: "JPQL LIKE '%...' with leading wildcard — bypasses B-tree indexes (full table scan). If user searches by partial string, consider full-text search (e.g., PostgreSQL tsvector) or a trigram index."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-jpa-query-or-in-where
+    pattern: '@Query\s*\(\s*[^)]*\bOR\b[^)]*\bWHERE\b'
+    severity: low
+    message: "WHERE clause with OR — may prevent index usage depending on DB planner. Consider UNION ALL for indexed lookups, or restructure with AND + denormalized columns."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-jpa-query-not-in
+    pattern: '@Query\s*\(\s*[^)]*\bNOT\s+IN\s*\(\s*SELECT\b'
+    severity: low
+    message: "NOT IN (SELECT ...) — slow on large datasets (anti-join). Use NOT EXISTS or LEFT JOIN ... WHERE ... IS NULL for better performance."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-jpa-query-distinct-with-join
+    pattern: '@Query\s*\(\s*[^)]*SELECT\s+DISTINCT\b[^)]*JOIN\b'
+    severity: low
+    message: "SELECT DISTINCT with JOIN — Hibernate may issue DISTINCT in SQL too (expensive sort). Use fetch=LAZY + JOIN FETCH only when needed; for DTOs, use SELECT new Dto(...) without DISTINCT."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 43. DB ANTI-PATTERNS — SPRING DATA JPA METHOD NAMING (v7.3)
+  # =========================================================================
+  - id: perf-spring-data-method-name-too-long
+    pattern: '\b(?:findBy|getBy|queryBy|readBy|countBy|existsBy)\w{60,}\s*\('
+    severity: info
+    message: "Spring Data derived query method name is very long — derived query parsing has limits and complex names (OrderBy/IgnoreCase/Containing combos) produce inefficient SQL. Move to @Query for clarity."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-spring-data-findby-containing
+    pattern: '\bfind\w*By\w*Containing\s*\('
+    severity: low
+    message: "findBy...Containing — generates LIKE '%...%' query (leading wildcard, full table scan). Use StartsWith (LIKE '...%') if prefix search is sufficient, or add a full-text index."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-spring-data-findby-ignorecase
+    pattern: '\bfind\w*By\w*IgnoreCase\s*\('
+    severity: low
+    message: "findBy...IgnoreCase — generates LOWER(column) = ? which bypasses standard indexes. Add a functional index on LOWER(column), or store a normalized lowercase column."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-spring-data-findby-orderby
+    pattern: '\bfind\w*By\w+OrderBy\w+(?:Desc|Asc)\s*\('
+    severity: info
+    message: "Derived query with OrderBy — verify an index matches the ORDER BY columns, otherwise DB does a filesort. Consider @Query with explicit ORDER BY and a covering index."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 44. DB ANTI-PATTERNS — AUDIT & SOFT DELETE (v7.3)
+  # =========================================================================
+  - id: perf-soft-delete-no-index
+    pattern: '@Where\s*\(\s*clause\s*=\s*[''"]\w+\s*=\s*0[''"]'
+    severity: info
+    message: "Hibernate @Where soft-delete filter — every query auto-appends WHERE deleted=0. Ensure an index covers (deleted, ...) on large tables, or this filter causes full scans."
+    metadata:
+      cwe: CWE-400
+
+  - id: perf-no-audit-listener
+    pattern: '@EntityListeners\s*\(\s*\{\s*\}'
+    severity: low
+    message: "Empty @EntityListeners — entity has no audit listener. For production entities, add a listener that captures @CreatedDate, @LastModifiedDate, @CreatedBy, @LastModifiedBy for traceability."
+    metadata:
+      cwe: CWE-778
+
+  # =========================================================================
+  # 45. DB ANTI-PATTERNS — MIGRATION SAFETY (v7.3)
+  # =========================================================================
+  - id: perf-flyway-baseline-on-migrate
+    pattern: 'spring\.flyway\.baseline-on-migrate\s*=\s*true'
+    severity: medium
+    message: "flyway.baseline-on-migrate=true — Flyway silently skips migrations on existing DBs. May hide schema drift. Use only during initial adoption; disable afterwards."
+    metadata:
+      cwe: CWE-755
+
+  - id: perf-liquibase-drop-first
+    pattern: 'dropAll\s*\(\s*\)|dropFirst\s*:\s*true'
+    severity: high
+    message: "Liquibase dropAll/dropFirst — DESTRUCTIVE operation, drops all tables. Never use in production configs or CI on prod DBs."
+    metadata:
+      cwe: CWE-1037
+
+  # =========================================================================
+  # 46. MEMORY LEAKS (v7.3.1)
+  #     Catches unbounded static collections, ThreadLocal without remove(),
+  #     listener leaks, and other slow-growth memory leaks.
+  # =========================================================================
+  - id: leak-static-collection-grow
+    pattern: '\b(?:static|private\s+static|public\s+static)\s+(?:final\s+)?(?:List|Map|Set|ArrayList|HashMap|HashSet|LinkedList|ConcurrentHashMap|ConcurrentLinkedQueue|ArrayBlockingQueue)\s*<\s*'
+    severity: high
+    message: "Static collection — grows for the lifetime of the JVM. If entries are added but never removed, this is a memory leak. Use a bounded cache (Caffeine with maximumSize) or weak references."
+    metadata:
+      cwe: CWE-401
+      owasp: A09
+
+  - id: leak-threadlocal-no-remove
+    pattern: 'new\s+ThreadLocal\s*[<(]'
+    severity: high
+    message: "ThreadLocal without remove() — in servlet containers, threads are pooled and reused. ThreadLocal values leak across requests. Always call threadLocal.remove() in a finally block."
+    metadata:
+      cwe: CWE-401
+      owasp: A09
+
+  - id: leak-listener-not-removed
+    pattern: '\.add(?:Listener|Observer|Handler|Callback|Subscriber)\s*\('
+    severity: medium
+    message: "Listener/Observer added but verify a matching removeListener() exists. If the listener holds a reference to a short-lived object (Activity, Request), it prevents GC — memory leak."
+    metadata:
+      cwe: CWE-401
+
+  - id: leak-static-cache-no-eviction
+    pattern: 'private\s+static\s+(?:final\s+)?(?:Map|ConcurrentHashMap|HashMap)\s*<\s*\w+\s*,\s*\w+\s*>\s+\w+\s*=\s*new\s+(?:ConcurrentHashMap|HashMap)\s*<\s*>'
+    severity: medium
+    message: "Static cache without eviction policy — grows unbounded. Use Caffeine.newBuilder().maximumSize(N).expireAfterWrite(...) or Guava CacheBuilder."
+    metadata:
+      cwe: CWE-401
+
+  - id: leak-interrupted-flag-swallowed
+    pattern: 'catch\s*\(\s*InterruptedException\s+\w+\s*\)\s*\{[^}]*\}'
+    severity: medium
+    message: "InterruptedException caught but thread interrupt flag not restored — interrupt status lost, breaks cooperative cancellation. Add `Thread.currentThread().interrupt()` in the catch block."
+    metadata:
+      cwe: CWE-755
+
+  - id: leak-unclosed-stream-created
+    pattern: '(?:Files\.lines|Files\.newInputStream|Files\.newBufferedReader|new\s+FileInputStream|new\s+FileReader|new\s+BufferedReader)\s*\('
+    severity: medium
+    message: "I/O stream created — verify it's inside try-with-resources. Otherwise file descriptor leak on exception. Wrap in `try (var s = ...) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  - id: leak-static-simpledateformat
+    pattern: '(?:static|private\s+static|public\s+static)\s+(?:final\s+)?SimpleDateFormat\s+'
+    severity: high
+    message: "Static SimpleDateFormat — NOT thread-safe. Concurrent access corrupts internal Calendar. Use DateTimeFormatter (immutable, thread-safe) or ThreadLocal<SimpleDateFormat>."
+    metadata:
+      cwe: CWE-362
+      owasp: A09
+
+  # =========================================================================
+  # 47. THREAD SAFETY (v7.3.1)
+  # =========================================================================
+  - id: ts-shared-mutable-state
+    pattern: 'static\s+(?:List|Map|Set|ArrayList|HashMap|HashSet)\s*<\s*\w+\s*>\s+\w+\s*=\s*new\s+(?:ArrayList|HashMap|HashSet)\s*<\s*>'
+    severity: high
+    message: "Static mutable collection without synchronization — data race. Use Collections.synchronizedList(...), ConcurrentHashMap, CopyOnWriteArrayList, or immutable collections."
+    metadata:
+      cwe: CWE-362
+
+  - id: ts-simpledateformat-shared
+    pattern: 'SimpleDateFormat\s+\w+\s*=\s*new\s+SimpleDateFormat'
+    severity: low
+    message: "SimpleDateFormat instance — not thread-safe. If shared across threads, will corrupt. Use DateTimeFormatter (immutable) or create per-call."
+    metadata:
+      cwe: CWE-362
+
+  - id: ts-stringbuilder-shared
+    pattern: 'static\s+(?:final\s+)?StringBuilder\s+'
+    severity: high
+    message: "Static StringBuilder — NOT thread-safe. Use StringBuffer (synchronized) or ThreadLocal<StringBuilder> for shared mutable string building."
+    metadata:
+      cwe: CWE-362
+
+  - id: ts-check-then-act-hashmap
+    pattern: 'if\s*\(\s*!\w+\.containsKey\s*\([^)]*\)\s*\)\s*\{?\s*\w+\.put\s*\('
+    severity: medium
+    message: "containsKey() then put() on a (possibly shared) Map — race condition. Use putIfAbsent() or computeIfAbsent() for atomic check-and-insert."
+    metadata:
+      cwe: CWE-362
+
+  - id: ts-double-checked-locking
+    pattern: 'if\s*\(\s*\w+\s*==\s*null\s*\)\s*\{[^}]*synchronized\b'
+    severity: high
+    message: "Double-checked locking — without `volatile` on the field, another thread may see a partially constructed object. Use a holder idiom or `volatile` + synchronized."
+    metadata:
+      cwe: CWE-362
+
+  - id: ts-synchronized-on-this
+    pattern: 'synchronized\s*\(\s*this\s*\)'
+    severity: low
+    message: "synchronized(this) — exposes lock to external code; another class can synchronize on the same object and cause deadlock. Use a private final lock object: `private final Object lock = new Object();`."
+    metadata:
+      cwe: CWE-662
+
+  - id: ts-synchronized-on-string
+    pattern: "synchronized\\s*\\(\\s*[\"']"
+    severity: high
+    message: "synchronized on a String literal — String interning means unrelated code can hold the same lock and cause deadlock. Use a private final Object lock."
+    metadata:
+      cwe: CWE-662
+
+  - id: ts-synchronized-on-nonfinal
+    pattern: 'synchronized\s*\(\s*\w+\s*\)(?![^\n]*\bprivate\s+final\b)'
+    severity: low
+    message: "synchronized on a non-final field — if the field is reassigned, threads synchronize on different locks. Make the lock field `private final`."
+    metadata:
+      cwe: CWE-662
+
+  - id: ts-notify-instead-of-notifyall
+    pattern: '\.notify\s*\(\s*\)'
+    severity: medium
+    message: "notify() instead of notifyAll() — only wakes ONE waiting thread, may miss the condition for others. Almost always use notifyAll() unless you're certain of the wakeup semantics."
+    metadata:
+      cwe: CWE-362
+
+  - id: ts-concurrenthashmap-compound
+    pattern: 'if\s*\(\s*!\w+\.(?:containsKey|contains)\s*\([^)]*\)\s*\)\s*\{?\s*\w+\.put(?:IfAbsent)?\s*\('
+    severity: low
+    message: "Check-then-act on ConcurrentHashMap — even though CHM is thread-safe, the compound operation isn't atomic. Use putIfAbsent/computeIfAbsent for atomic semantics."
+    metadata:
+      cwe: CWE-362
+
+  # =========================================================================
+  # 48. NULL SAFETY (v7.3.1)
+  # =========================================================================
+  - id: null-optional-get-without-check
+    pattern: '\.get\s*\(\s*\)(?![^\n]*(?:isPresent|orElse|orElseThrow|orElseGet))'
+    severity: high
+    message: "Optional.get() without isPresent() check — throws NoSuchElementException if empty. Use orElse(), orElseThrow(), or check isPresent() first."
+    metadata:
+      cwe: CWE-476
+
+  - id: null-findfirst-get
+    pattern: '\.findFirst\s*\(\s*\)\s*\.\s*get\s*\(\s*\)'
+    severity: high
+    message: "Stream.findFirst().get() — throws NoSuchElementException if stream is empty. Use findFirst().orElse(default) or orElseThrow()."
+    metadata:
+      cwe: CWE-476
+
+  - id: null-findany-get
+    pattern: '\.findAny\s*\(\s*\)\s*\.\s*get\s*\(\s*\)'
+    severity: high
+    message: "Stream.findAny().get() — throws NoSuchElementException if stream is empty. Use findAny().orElse(default) or orElseThrow()."
+    metadata:
+      cwe: CWE-476
+
+  - id: null-integer-equality
+    pattern: 'Integer\s+\w+\s*=\s*\d+\s*;\s*\n?\s*[^;]*\b\w+\s*==\s*\w+'
+    severity: medium
+    message: "Integer == Integer — autoboxing creates new Integer objects; == compares references. Values outside -128..127 fail equality check. Use .equals() or .intValue() == .intValue()."
+    metadata:
+      cwe: CWE-755
+
+  - id: null-return-null-from-optional
+    pattern: 'return\s+null\s*;'
+    severity: low
+    message: "return null — caller must null-check. Prefer Optional<T> return type, empty collection, or sentinel object pattern. See 'Optional is your friend' (J. Bloch, Effective Java)."
+    metadata:
+      cwe: CWE-476
+
+  - id: null-string-equality-identity
+    pattern: "==\\s*[\"']"
+    severity: high
+    message: "== on String literal — compares references, not values. Always use .equals() for String comparison, or Objects.equals() for null-safe."
+    metadata:
+      cwe: CWE-597
+
+  - id: null-assert-notnull
+    pattern: '\.orElse\s*\(\s*null\s*\)'
+    severity: low
+    message: "Optional.orElse(null) — defeats the purpose of Optional. Use orElseThrow() to fail fast, or return Optional.empty() if absence is meaningful."
+    metadata:
+      cwe: CWE-476
+
+  - id: null-map-get-without-containskey
+    pattern: '\b\w+\s+\w+\s*=\s*\w+\.get\s*\([^)]*\)\s*;'
+    severity: info
+    message: "Map.get() without containsKey check — returns null if key absent, may cause NPE on unboxing or method call. Use getOrDefault() or computeIfAbsent()."
+    metadata:
+      cwe: CWE-476
+
+  - id: null-autoboxing-unbox
+    pattern: '\bint\s+\w+\s*=\s*\w+\.get\s*\('
+    severity: medium
+    message: "Autoboxing unbox — if Map.get() returns null Integer, unboxing to int throws NPE. Use getOrDefault(key, 0) or check for null first."
+    metadata:
+      cwe: CWE-476
+
+  # =========================================================================
+  # 49. EXCEPTION HANDLING (v7.3.1)
+  # =========================================================================
+  - id: exc-catch-exception-too-broad
+    pattern: 'catch\s*\(\s*Exception\s+\w+\s*\)'
+    severity: medium
+    message: "catch (Exception e) — too broad; catches RuntimeException (NPE, IllegalArgument) and swallows bugs. Catch specific exceptions or rethrow as RuntimeException."
+    metadata:
+      cwe: CWE-396
+
+  - id: exc-catch-throwable
+    pattern: 'catch\s*\(\s*Throwable\s+\w+\s*\)'
+    severity: high
+    message: "catch (Throwable t) — catches OutOfMemoryError, StackOverflowError, ThreadDeath which should propagate. Only catch Exception (or narrower)."
+    metadata:
+      cwe: CWE-396
+
+  - id: exc-empty-catch-block
+    pattern: 'catch\s*\(\s*\w+\s+\w+\s*\)\s*\{\s*\}'
+    severity: high
+    message: "Empty catch block — swallows the exception silently. At minimum log it; better, handle it or rethrow as a domain exception."
+    metadata:
+      cwe: CWE-390
+      owasp: A09
+
+  - id: exc-printstacktrace
+    pattern: '\.printStackTrace\s*\(\s*\)'
+    severity: medium
+    message: "e.printStackTrace() — writes to System.err, bypasses logger. In production, stack traces go to stdout, not log files. Use log.error(\"message\", e)."
+    metadata:
+      cwe: CWE-489
+      owasp: A09
+
+  - id: exc-system-out-println
+    pattern: 'System\.(?:out|err)\.print(?:ln|f)?\s*\('
+    severity: medium
+    message: "System.out.println in production code — bypasses logger, no log levels, no structured output. Use SLF4J/Logback: log.info(\"message {}\", arg)."
+    metadata:
+      cwe: CWE-489
+      owasp: A09
+
+  - id: exc-throw-runtime-without-context
+    pattern: 'throw\s+new\s+RuntimeException\s*\(\s*\)'
+    severity: medium
+    message: "throw new RuntimeException() — no message, no cause. Impossible to debug in production. Provide a descriptive message and the original cause: `new RuntimeException(\"context\", cause)`."
+    metadata:
+      cwe: CWE-755
+
+  - id: exc-throw-e-without-cause
+    pattern: 'throw\s+new\s+\w+Exception\s*\(\s*e\s*\)'
+    severity: low
+    message: "throw new SomeException(e) — message lost. Pass both: `new SomeException(\"descriptive context: \" + e.getMessage(), e)` or use `e` as cause with a context message."
+    metadata:
+      cwe: CWE-755
+
+  - id: exc-return-in-finally
+    pattern: 'finally\s*\{[^}]*return\s+'
+    severity: critical
+    message: "return inside finally — silently swallows exceptions thrown in try block. NEVER return from finally. Refactor to return after the try-finally."
+    metadata:
+      cwe: CWE-584
+
+  - id: exc-finally-throws
+    pattern: 'finally\s*\{[^}]*throw\s+'
+    severity: high
+    message: "throw inside finally — masks the original exception from try block. Move cleanup that can throw to a separate method or use try-with-resources."
+    metadata:
+      cwe: CWE-584
+
+  - id: exc-lost-exception-stacktrace
+    pattern: 'catch\s*\(\s*\w+\s+\w+\s*\)\s*\{[^}]*throw\s+new\s+\w+Exception\s*\(\s*["'']'
+    severity: medium
+    message: "catch + throw new Exception(\"msg\") — original exception's stack trace is lost. Pass the cause: `throw new SomeException(\"msg\", e)`."
+    metadata:
+      cwe: CWE-209
+
+  # =========================================================================
+  # 50. RESOURCE CLEANUP (v7.3.1)
+  # =========================================================================
+  - id: resource-try-finally-not-twr
+    pattern: 'try\s*\{[^}]*\}\s*finally\s*\{[^}]*\.close\s*\(\s*\)'
+    severity: medium
+    message: "try-finally with .close() — should be try-with-resources. The TWR form handles edge cases (suppressed exceptions, null resources) automatically."
+    metadata:
+      cwe: CWE-403
+
+  - id: resource-connection-not-twr
+    pattern: 'Connection\s+\w+\s*=\s*\w+\.getConnection'
+    severity: medium
+    message: "Connection assigned outside try-with-resources — leak risk on exception. Use `try (Connection c = ds.getConnection()) { ... }`."
+    metadata:
+      cwe: CWE-401
+      owasp: A09
+
+  - id: resource-preparedstatement-not-twr
+    pattern: 'PreparedStatement\s+\w+\s*=\s*\w+\.prepareStatement'
+    severity: medium
+    message: "PreparedStatement assigned outside try-with-resources — cursor leak risk. Use `try (PreparedStatement ps = ...) { ... }`."
+    metadata:
+      cwe: CWE-401
+      owasp: A09
+
+  - id: resource-inputstream-not-twr
+    pattern: 'InputStream\s+\w+\s*=\s*new\s+(?:FileInputStream|BufferedInputStream|ByteArrayInputStream)'
+    severity: medium
+    message: "InputStream assigned outside try-with-resources — file descriptor leak risk. Use `try (var is = new FileInputStream(...)) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  - id: resource-reader-not-twr
+    pattern: '(?:BufferedReader|FileReader|InputStreamReader)\s+\w+\s*=\s*new\s+'
+    severity: medium
+    message: "Reader assigned outside try-with-resources — resource leak risk. Use `try (var r = new FileReader(...)) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  - id: resource-outputstream-not-twr
+    pattern: 'OutputStream\s+\w+\s*=\s*new\s+(?:FileOutputStream|BufferedOutputStream|ByteArrayOutputStream)'
+    severity: medium
+    message: "OutputStream assigned outside try-with-resources — file descriptor + buffer flush leak risk. Use `try (var os = ...) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  - id: resource-zipinputstream-not-closed
+    pattern: 'ZipInputStream\s+\w+\s*=\s*new\s+ZipInputStream'
+    severity: high
+    message: "ZipInputStream not in try-with-resources — holds file handle AND native zip resources. Must be closed. Use `try (var zis = ...) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  - id: resource-randomaccessfile-not-twr
+    pattern: 'RandomAccessFile\s+\w+\s*=\s*new\s+RandomAccessFile'
+    severity: medium
+    message: "RandomAccessFile assigned outside try-with-resources — file handle leak risk. Use `try (var raf = ...) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  - id: resource-channel-not-closed
+    pattern: '(?:FileChannel|SocketChannel|DatagramChannel)\s+\w+\s*=\s*\w+\.getChannel'
+    severity: medium
+    message: "NIO Channel assigned outside try-with-resources — native resource leak risk. Use `try (var ch = ...) { ... }`."
+    metadata:
+      cwe: CWE-401
+
+  # =========================================================================
+  # 51. SPRING ANTI-PATTERNS (v7.3.1)
+  # =========================================================================
+  - id: spring-autowired-field-injection
+    pattern: '@Autowired\s+(?:private|protected|public)\s+'
+    severity: low
+    message: "@Autowired on a field — field injection makes the class hard to test without Spring. Use constructor injection (remove @Autowired, add @RequiredArgsConstructor or explicit constructor)."
+    metadata:
+      cwe: CWE-1078
+
+  - id: spring-value-for-secret
+    pattern: '@Value\s*\(\s*["''](?:\$\{)?(?:password|secret|api[_-]?key|access[_-]?key|private[_-]?key|token)'
+    severity: high
+    message: "@Value for a secret — secrets in @Value are exposed in /env endpoint and stack traces. Use Spring Cloud Config Server, Vault, or environment variables via System.getenv()."
+    metadata:
+      cwe: CWE-798
+      owasp: A02
+
+  - id: spring-component-scan-broad
+    pattern: '@ComponentScan\s*\(\s*basePackages\s*=\s*["''](?:com|org|net|io)\b'
+    severity: low
+    message: "@ComponentScan on a top-level package — scans many irrelevant classes, slows startup and may pick up unintended beans. Narrow to specific subpackages."
+    metadata:
+      cwe: CWE-400
+
+  - id: spring-postconstruct-heavy-work
+    pattern: '@PostConstruct'
+    severity: low
+    message: "@PostConstruct — if this does heavy work (DB queries, HTTP calls), it blocks startup. Move to ApplicationReadyEvent listener for non-critical initialization."
+    metadata:
+      cwe: CWE-400
+
+  - id: spring-predestroy-missing-resource
+    pattern: '@PreDestroy'
+    severity: info
+    message: "@PreDestroy detected — good practice. Verify it closes all resources opened in @PostConstruct (connection pools, file handles, scheduled tasks)."
+    metadata:
+      cwe: CWE-401
+
+  - id: spring-requestmapping-all-methods
+    pattern: '@RequestMapping\s*\(\s*["''][^"'']+["'']\s*\)(?![^\n]*method\s*=)'
+    severity: low
+    message: "@RequestMapping without method= — accepts ALL HTTP methods (GET, POST, PUT, DELETE, PATCH). Be explicit: use @GetMapping/@PostMapping/etc."
+    metadata:
+      cwe: CWE-937
+
+  - id: spring-controller-with-business-logic
+    pattern: '@(?:Rest)?Controller\b[^@]*?(?:repository|repo|em|entityManager)\.(?:save|persist|merge|delete|update|insert)\s*\('
+    severity: medium
+    message: "Controller directly calls repository — bypasses service layer. Business logic and transactions belong in @Service classes. Controller should only orchestrate."
+    metadata:
+      cwe: CWE-1078
+
+  - id: spring-service-no-transactional
+    pattern: '@Service\b[^@]*?(?:repository|repo)\.(?:save|persist|merge|delete|update|insert)\s*\((?![^@]*@Transactional)'
+    severity: medium
+    message: "@Service method writes to DB without @Transactional — Spring won't start a transaction. Each repo.save() commits separately; partial writes on exception. Add @Transactional."
+    metadata:
+      cwe: CWE-755
+
+  - id: spring-static-in-bean
+    pattern: 'static\s+\w+\s+\w+\s*=\s*new\s+(?:ArrayList|HashMap|HashSet)\s*<\s*>\s*\(\s*\)'
+    severity: medium
+    message: "Static mutable field in a Spring bean — shared across all requests. Race condition + state pollution. Use instance field or scoped proxy."
+    metadata:
+      cwe: CWE-362
+
+  # =========================================================================
+  # 52. VALIDATION MISSING (v7.3.1)
+  # =========================================================================
+  - id: val-requestparam-no-validation
+    pattern: '@RequestParam\s+(?:String|Integer|int|Long|long)\s+\w+(?![^\n,)]*@Valid)'
+    severity: medium
+    message: "@RequestParam without validation — accepts any value. Add @Size, @Pattern, @Min, @Max as appropriate to constrain user input."
+    metadata:
+      cwe: CWE-20
+      owasp: A03
+
+  - id: val-requestbody-string-unbounded
+    pattern: '@RequestBody\s+String\s+\w+'
+    severity: high
+    message: "@RequestBody String — accepts unbounded text. Client can send 1GB body, causing OOM. Bind a typed DTO with @Size constraints, or configure spring.servlet.multipart.max-request-size."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: val-pathvariable-no-pattern
+    pattern: '@PathVariable\s+String\s+\w+(?![^\n,)]*@Pattern)'
+    severity: medium
+    message: "@PathVariable String without @Pattern — accepts any path segment. Add @Pattern(\"[a-zA-Z0-9-]+\") to constrain allowed characters."
+    metadata:
+      cwe: CWE-20
+      owasp: A03
+
+  - id: val-requestheader-no-validation
+    pattern: '@RequestHeader\s+(?:String|List\s*<\s*String\s*>)\s+\w+'
+    severity: low
+    message: "@RequestHeader without validation — headers are user-controlled. If used for logic (e.g., X-Forwarded-For), validate format. CRLF injection possible in some sinks."
+    metadata:
+      cwe: CWE-20
+
+  - id: val-dto-string-no-size
+    pattern: 'private\s+String\s+\w+\s*;'
+    severity: info
+    message: "DTO String field without @Size — unbounded length. Add @Size(max=N) to prevent oversized payloads. Combined with @Valid on the controller, this enforces server-side limits."
+    metadata:
+      cwe: CWE-20
+      owasp: A03
+
+  - id: val-dto-int-no-range
+    pattern: 'private\s+(?:int|Integer|long|Long)\s+\w+\s*;'
+    severity: info
+    message: "DTO numeric field without @Min/@Max — unbounded range. Add @Min/@Max to prevent unreasonable values (e.g., qty=Integer.MAX_VALUE)."
+    metadata:
+      cwe: CWE-20
+
+  - id: val-list-no-size
+    pattern: 'private\s+List\s*<\s*\w+\s*>\s+\w+\s*;'
+    severity: info
+    message: "DTO List field without @Size — client can send unbounded list (OOM). Add @Size(max=100) to cap list length."
+    metadata:
+      cwe: CWE-400
+
+  - id: val-collection-no-notempty
+    pattern: 'private\s+(?:Set|Collection)\s*<\s*\w+\s*>\s+\w+\s*;'
+    severity: info
+    message: "Collection field without @NotEmpty/@Size — may be null or unbounded. Add @NotEmpty if required, @Size(max=N) to bound."
+    metadata:
+      cwe: CWE-20
+
+  - id: val-email-no-validation
+    pattern: 'private\s+String\s+\w*(?:email|mail)\w*\s*;'
+    severity: medium
+    message: "Email field without @Email validation — accepts malformed input. Add @Email annotation to enforce RFC 822 format."
+    metadata:
+      cwe: CWE-20
+
+  - id: val-uuid-field-no-pattern
+    pattern: 'private\s+String\s+\w*(?:uuid|guid)\w*\s*;'
+    severity: medium
+    message: "UUID String field without @Pattern — accepts 'undefined' / null / malformed. Add @Pattern(regexp = \"^[0-9a-fA-F-]{36}$\")."
+    metadata:
+      cwe: CWE-20
+      production_error: invalid_uuid_500
+
+  # =========================================================================
+  # 53. CONCURRENCY (v7.3.1)
+  # =========================================================================
+  - id: conc-wait-without-while
+    pattern: 'if\s*\([^)]*\)\s*\{[^}]*\.wait\s*\('
+    severity: high
+    message: "wait() inside if (not while) — spurious wakeups will cause the condition to be re-checked incorrectly. Always use `while (condition) { wait(); }`."
+    metadata:
+      cwe: CWE-362
+
+  - id: conc-lock-no-try-finally
+    pattern: '\.lock\s*\(\s*\)(?![^\n]*try)'
+    severity: high
+    message: "Lock.lock() without try-finally — if the code between lock() and unlock() throws, the lock is never released. Use `lock.lock(); try { ... } finally { lock.unlock(); }`."
+    metadata:
+      cwe: CWE-664
+
+  - id: conc-reentrantlock-not-in-finally
+    pattern: '\.unlock\s*\(\s*\)'
+    severity: info
+    message: "Lock.unlock() — verify it's in a finally block. Otherwise lock leaks on exception."
+    metadata:
+      cwe: CWE-664
+
+  - id: conc-thread-run-instead-of-start
+    pattern: '\.run\s*\(\s*\)(?![^\n]*new\s+Thread)'
+    severity: high
+    message: "Thread.run() instead of Thread.start() — run() executes in the CURRENT thread, not a new one. Use start() to spawn a new thread."
+    metadata:
+      cwe: CWE-755
+
+  - id: conc-executor-no-shutdown
+    pattern: 'new\s+(?:ThreadPoolExecutor|ScheduledThreadPoolExecutor|ForkJoinPool)\s*\('
+    severity: medium
+    message: "ExecutorService created — verify executor.shutdown()/shutdownNow() is called on app shutdown. Otherwise non-daemon threads keep JVM alive."
+    metadata:
+      cwe: CWE-401
+
+  - id: conc-fixedthreadpool-unbounded-queue
+    pattern: 'Executors\.newFixedThreadPool\s*\(|Executors\.newSingleThreadExecutor\s*\('
+    severity: high
+    message: "Executors.newFixedThreadPool — uses unbounded LinkedBlockingQueue. Tasks pile up → OOM. Use ThreadPoolExecutor with a bounded queue and explicit rejection policy."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: conc-cachedthreadpool-unbounded
+    pattern: 'Executors\.newCachedThreadPool\s*\('
+    severity: high
+    message: "Executors.newCachedThreadPool — creates unbounded threads under load (Integer.MAX_VALUE). Each thread ~1MB stack. Use ThreadPoolExecutor with max threads bounded to CPU * 2."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: conc-scheduled-thread-pool-too-large
+    pattern: 'Executors\.newScheduledThreadPool\s*\(\s*(?:[5-9]|\d{2,})\s*\)'
+    severity: medium
+    message: "ScheduledThreadPool with many threads — scheduled executors rarely need >1-2 threads. Each idle thread still consumes ~1MB stack."
+    metadata:
+      cwe: CWE-400
+
+  - id: conc-volatile-array
+    pattern: 'volatile\s+\w+\s*\[\s*\]'
+    severity: medium
+    message: "volatile on an array — only the reference is volatile, not array contents. Other threads can still see stale element values. Use AtomicReferenceArray or AtomicIntegerArray."
+    metadata:
+      cwe: CWE-362
+
+  # =========================================================================
+  # 54. STRING & COLLECTIONS MISUSE (v7.3.1)
+  # =========================================================================
+  - id: str-concat-in-loop
+    pattern: 'for\s*\([^)]*\)\s*\{[^}]*\+=\s*["'']'
+    severity: medium
+    message: "String += inside a loop — creates a new String + char[] per iteration (O(N²)). Use StringBuilder.append()."
+    metadata:
+      cwe: CWE-400
+
+  - id: str-concat-in-stream
+    pattern: '\.stream\s*\(\s*\)\s*\.\s*(?:map|forEach)\s*\([^)]*[\+=]\s*["'']'
+    severity: medium
+    message: "String concatenation inside stream — creates new String per element. Use Collectors.joining() instead."
+    metadata:
+      cwe: CWE-400
+
+  - id: str-equals-null-risk
+    pattern: '\b\w+\.equals\s*\(\s*null\s*\)'
+    severity: low
+    message: ".equals(null) — always returns false. If you mean \"is null\", use `== null` or `Objects.isNull(x)`."
+    metadata:
+      cwe: CWE-755
+
+  - id: str-equals-ignored-case-on-uuid
+    pattern: '\w*(?:uuid|guid)\w*\.equalsIgnoreCase\s*\('
+    severity: low
+    message: "equalsIgnoreCase on UUID — UUIDs are case-insensitive by spec, but if stored in DB with CHECK constraint (lowercase), mixed case will fail. Normalize with .toLowerCase()."
+    metadata:
+      cwe: CWE-755
+
+  - id: coll-arrays-as-list-modify
+    pattern: 'Arrays\.asList\s*\([^)]*\)\s*\.\s*(?:add|remove|set)\s*\('
+    severity: high
+    message: "Arrays.asList().add/remove() — throws UnsupportedOperationException. The list is fixed-size. Use `new ArrayList<>(Arrays.asList(...))` for a mutable copy."
+    metadata:
+      cwe: CWE-755
+
+  - id: coll-sublist-then-modify
+    pattern: '\.subList\s*\([^)]*\)\s*\.\s*(?:add|remove|set|clear)\s*\('
+    severity: medium
+    message: "List.subList() — backed by the parent. Modifications to parent after subList() throw ConcurrentModificationException. Use `new ArrayList<>(list.subList(...))` for a copy."
+    metadata:
+      cwe: CWE-755
+
+  - id: coll-arraylist-no-capacity
+    pattern: 'new\s+ArrayList\s*<\s*[^>]*>\s*\(\s*\)(?![^\n]*\.\s*ensureCapacity)'
+    severity: info
+    message: "new ArrayList<>() — default capacity 10, will resize (copy) when exceeded. If you know the size, pass it: `new ArrayList<>(expectedSize)`."
+    metadata:
+      cwe: CWE-400
+
+  - id: coll-hashmap-no-capacity
+    pattern: 'new\s+HashMap\s*<\s*[^>]*>\s*\(\s*\)'
+    severity: info
+    message: "new HashMap<>() — default capacity 16, load factor 0.75. Resizing rehashes all entries (expensive). If you know the size, pass `new HashMap<>((int)(expected / 0.75f) + 1)`."
+    metadata:
+      cwe: CWE-400
+
+  - id: coll-iterator-remove-instead-of-collection
+    pattern: '\.remove\s*\(\s*\w+\s*\)(?![^\n]*iterator)'
+    severity: low
+    message: "Collection.remove(element) inside iteration — ConcurrentModificationException. Use Iterator.remove() or `list.removeIf(...)`."
+    metadata:
+      cwe: CWE-755
+
+  - id: coll-collections-synchronized-iterate
+    pattern: 'Collections\.synchronized(?:List|Map|Set)\s*\('
+    severity: low
+    message: "Collections.synchronizedList — individual ops are synchronized, but iteration is NOT. Wrap iteration in `synchronized(list) { ... }` or use CopyOnWriteArrayList / ConcurrentHashMap."
+    metadata:
+      cwe: CWE-362
+
+  # =========================================================================
+  # 55. I/O PERFORMANCE (v7.3.1)
+  # =========================================================================
+  - id: io-readalllines-large-file
+    pattern: 'Files\.readAllLines\s*\('
+    severity: medium
+    message: "Files.readAllLines() — loads entire file into memory. For large files, use Files.lines() (Stream<String>) which reads lazily. Or use Files.readAllBytes() for binary and parse in chunks."
+    metadata:
+      cwe: CWE-400
+
+  - id: io-readallbytes-large-file
+    pattern: 'Files\.readAllBytes\s*\('
+    severity: medium
+    message: "Files.readAllBytes() — loads entire file into a byte[]. For large files, use a streaming InputStream with a bounded buffer."
+    metadata:
+      cwe: CWE-400
+
+  - id: io-string-no-charset
+    pattern: 'new\s+String\s*\(\s*[^)]+\s*\)(?![^\n]*Charset)'
+    severity: medium
+    message: "new String(bytes) without Charset — uses platform default encoding (varies by OS). Always specify: `new String(bytes, StandardCharsets.UTF_8)`."
+    metadata:
+      cwe: CWE-1135
+
+  - id: io-getbytes-no-charset
+    pattern: '\.getBytes\s*\(\s*\)'
+    severity: medium
+    message: "String.getBytes() without Charset — uses platform default encoding. Always specify: `str.getBytes(StandardCharsets.UTF_8)`."
+    metadata:
+      cwe: CWE-1135
+
+  - id: io-inputstreamreader-no-charset
+    pattern: 'new\s+InputStreamReader\s*\(\s*[^)]+\s*\)'
+    severity: medium
+    message: "InputStreamReader without Charset — uses platform default. Always specify: `new InputStreamReader(is, StandardCharsets.UTF_8)`."
+    metadata:
+      cwe: CWE-1135
+
+  - id: io-outputstreamwriter-no-charset
+    pattern: 'new\s+OutputStreamWriter\s*\(\s*[^)]+\s*\)'
+    severity: medium
+    message: "OutputStreamWriter without Charset — uses platform default. Always specify: `new OutputStreamWriter(os, StandardCharsets.UTF_8)`."
+    metadata:
+      cwe: CWE-1135
+
+  - id: io-file-listfiles-no-nullcheck
+    pattern: '\.listFiles\s*\(\s*\)\s*\.'
+    severity: medium
+    message: "File.listFiles() — returns null if not a directory or if I/O error. Dereferencing without null check causes NPE. Use `var files = f.listFiles(); if (files != null) ...`."
+    metadata:
+      cwe: CWE-476
+
+  - id: io-fileinputstream-no-existence-check
+    pattern: 'new\s+FileInputStream\s*\(\s*[^)]+\s*\)'
+    severity: low
+    message: "new FileInputStream(path) — throws FileNotFoundException if path doesn't exist. Verify file.exists() or use Files.newInputStream(path) which throws a more informative NoSuchFileException."
+    metadata:
+      cwe: CWE-755
+
+  - id: io-bufferedreader-line-loop
+    pattern: 'while\s*\(\s*\(\s*\w+\s*=\s*\w+\.readLine\s*\(\s*\)\s*\)\s*!=\s*null\s*\)'
+    severity: info
+    message: "BufferedReader.readLine() loop — efficient, but consider Files.lines(path).forEach(...) for shorter code. Or try-with-resources + Stream API."
+    metadata:
+      cwe: CWE-400
+
+  # =========================================================================
+  # 56. TIME / DATE MISUSE (v7.3.1)
+  # =========================================================================
+  - id: time-new-date-for-now
+    pattern: 'new\s+Date\s*\(\s*\)'
+    severity: low
+    message: "new Date() — legacy API, mutable, not timezone-aware. Use Instant.now() (UTC) or ZonedDateTime.now(ZoneId) for a specific zone."
+    metadata:
+      cwe: CWE-755
+
+  - id: time-calendar-getinstance
+    pattern: 'Calendar\.getInstance\s*\(\s*\)'
+    severity: low
+    message: "Calendar.getInstance() — legacy API, mutable, month is 0-indexed (January=0). Use LocalDate.now(), LocalDateTime.now(), or ZonedDateTime.now(ZoneId)."
+    metadata:
+      cwe: CWE-755
+
+  - id: time-simpledateformat-no-locale
+    pattern: 'new\s+SimpleDateFormat\s*\(\s*["''][^"'']+["'']\s*\)'
+    severity: medium
+    message: "SimpleDateFormat without Locale — uses platform default. On a German locale, 'MMM' yields 'Okt' instead of 'Oct'. Always pass Locale: `new SimpleDateFormat(\"yyyy-MM-dd\", Locale.US)`."
+    metadata:
+      cwe: CWE-1135
+
+  - id: time-date-gettime-for-elapsed
+    pattern: 'new\s+Date\s*\(\s*\)\s*\.\s*getTime\s*\(\s*\)'
+    severity: low
+    message: "new Date().getTime() for elapsed time — millisecond precision only. Use System.nanoTime() for high-resolution elapsed timing (nanosecond, monotonic)."
+    metadata:
+      cwe: CWE-755
+
+  - id: time-system-currenttimemillis-for-elapsed
+    pattern: 'System\.currentTimeMillis\s*\(\s*\)'
+    severity: low
+    message: "System.currentTimeMillis() — wall-clock, can go backwards on NTP sync. For elapsed time use System.nanoTime() (monotonic). For wall-clock use Instant.now()."
+    metadata:
+      cwe: CWE-755
+
+  - id: time-localdatetime-no-zone
+    pattern: 'LocalDateTime\.now\s*\(\s*\)'
+    severity: medium
+    message: "LocalDateTime.now() — no timezone info. For server-side timestamps use Instant.now() (UTC) or ZonedDateTime.now(ZoneId). LocalDateTime is for UI display only."
+    metadata:
+      cwe: CWE-755
+
+  - id: time-threadlocal-dateformat
+    pattern: 'ThreadLocal\s*<\s*(?:Simple)?DateFormat\s*>'
+    severity: info
+    message: "ThreadLocal<DateFormat> — workaround for SimpleDateFormat thread-safety. Prefer DateTimeFormatter (immutable, thread-safe) — no ThreadLocal needed."
+    metadata:
+      cwe: CWE-755
+
+  # =========================================================================
+  # 57. LOGGING MISUSE (v7.3.1)
+  # =========================================================================
+  - id: log-string-concat
+    pattern: 'log(?:ger)?\.(?:info|debug|warn|error|trace)\s*\(\s*["''][^"'']*\s*["'']\s*\+'
+    severity: medium
+    message: "Logger with string concatenation — builds the message even when log level is disabled. Use parameterized: `log.info(\"user {} logged in\", userId)`."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: log-debug-with-concat
+    pattern: 'log(?:ger)?\.debug\s*\(\s*["''][^"'']*\s*["'']\s*\+'
+    severity: medium
+    message: "log.debug with string concatenation — even if DEBUG is disabled, the toString() of the concat arguments still runs. Use `log.debug(\"obj={}\", obj)` — SLF4J skips toString() if disabled."
+    metadata:
+      cwe: CWE-400
+
+  - id: log-exception-no-message
+    pattern: 'log(?:ger)?\.(?:error|warn)\s*\(\s*\w+\s*\)(?![^\n]*,\s*\w+\s*\))'
+    severity: medium
+    message: "log.error(e) or log.error(\"msg\") without the exception — stack trace lost. Always pass the throwable: `log.error(\"operation failed\", e)`."
+    metadata:
+      cwe: CWE-778
+
+  - id: log-info-in-loop
+    pattern: 'for\s*\([^)]*\)\s*\{[^}]*log(?:ger)?\.(?:info|debug|trace)\s*\('
+    severity: medium
+    message: "Logging inside a loop — produces N log lines, floods log aggregators. Aggregate and log once after the loop, or log at TRACE level only."
+    metadata:
+      cwe: CWE-400
+      owasp: A09
+
+  - id: log-stacktrace-at-info
+    pattern: 'log(?:ger)?\.info\s*\([^)]*,\s*\w+\s*\)'
+    severity: medium
+    message: "log.info with exception — INFO level is too high for stack traces. Use log.error or log.warn. INFO should be for business events, not errors."
+    metadata:
+      cwe: CWE-778
+
+  - id: log-print-stack-trace
+    pattern: '\.printStackTrace\s*\(\s*\)'
+    severity: high
+    message: "e.printStackTrace() — bypasses logger, goes to System.err. In containers, stderr may be lost. Use `log.error(\"context\", e)`."
+    metadata:
+      cwe: CWE-489
+      owasp: A09
+
+  - id: log-system-out-in-catch
+    pattern: 'catch\s*\(\s*\w+\s+\w+\s*\)\s*\{[^}]*System\.(?:out|err)\.print'
+    severity: high
+    message: "System.out in catch block — bypasses logger. Use `log.error(\"context\", e)` for proper log level, structured logging, and exception capture."
+    metadata:
+      cwe: CWE-778
+
+  # =========================================================================
+  # 58. HTTP / REST ISSUES (v7.3.1)
+  # =========================================================================
+  - id: http-cors-allow-all
+    pattern: 'allowedOrigins\s*=\s*["'']\*["'']|addAllowedOrigin\s*\(\s*["'']\*["'']'
+    severity: critical
+    message: "CORS allowedOrigins='*' — allows ANY website to make authenticated requests. Specify exact origins (e.g., https://app.example.com)."
+    metadata:
+      cwe: CWE-942
+      owasp: A05
+
+  - id: http-cors-allow-credentials-with-star
+    pattern: 'allowCredentials\s*=\s*true[^;]*allowedOrigins\s*=\s*["'']\*["'']'
+    severity: critical
+    message: "CORS allowCredentials=true with allowedOrigins='*' — browsers reject this combination, but Spring may serialize it incorrectly. Specify exact origins."
+    metadata:
+      cwe: CWE-942
+      owasp: A05
+
+  - id: http-csrf-disabled
+    pattern: 'csrf\s*\(\s*\)\s*\.\s*disable\s*\(\s*\)'
+    severity: high
+    message: "CSRF disabled — for state-changing endpoints (POST/PUT/DELETE) using cookies/sessions, this allows cross-site request forgery. Only disable for stateless JWT APIs."
+    metadata:
+      cwe: CWE-352
+      owasp: A01
+
+  - id: http-frame-options-disabled
+    pattern: 'frameOptions\s*\(\s*\)\s*\.\s*disable|X-Frame-Options\s*:\s*DENY'
+    severity: medium
+    message: "Frame options disabled — page can be embedded in <iframe>, enabling clickjacking. Use Content-Security-Policy: frame-ancestors 'self' instead."
+    metadata:
+      cwe: CWE-1021
+      owasp: A05
+
+  - id: http-ssl-trust-all
+    pattern: 'TrustAllCerts|setHostnameVerifier\s*\(\s*\(\s*\)\s*->\s*true|ALLOW_ALL_HOSTNAME_VERIFIER'
+    severity: critical
+    message: "Trust-all SSL / hostname verifier — disables certificate validation, MITM attack possible. Use a proper trust store and the default hostname verifier."
+    metadata:
+      cwe: CWE-295
+      owasp: A02
+
+  - id: http-http-for-external
+    pattern: '["'']http://(?:[^"'']+\.com|[^"'']+\.org|[^"'']+\.net|[^"'']+\.io)["'']'
+    severity: medium
+    message: "HTTP (not HTTPS) URL — unencrypted, MITM possible. Use HTTPS for all external calls. Many APIs reject HTTP requests."
+    metadata:
+      cwe: CWE-319
+      owasp: A02
+
+  - id: http-no-content-type-response
+    pattern: 'ResponseEntity\.ok\s*\(\s*\)\s*\.\s*body\s*\((?![^\n]*contentType)'
+    severity: low
+    message: "ResponseEntity without Content-Type — browser may MIME-sniff and execute as HTML. Always set Content-Type explicitly: `.contentType(MediaType.APPLICATION_JSON)`."
+    metadata:
+      cwe: CWE-430
+
+  - id: http-missing-hsts
+    pattern: 'HstsConfigurer|strict-transport-security'
+    severity: info
+    message: "HSTS config detected — verify max-age>=31536000 (1 year) and includeSubDomains. Without HSTS, users on public wifi can be downgraded to HTTP."
+    metadata:
+      cwe: CWE-319
+
+  - id: http-cookie-not-secure
+    pattern: 'new\s+Cookie\s*\([^)]*\)(?![^\n]*\.setSecure)'
+    severity: high
+    message: "Cookie without setSecure(true) — sent over HTTP, can be intercepted. Always set secure flag for session/auth cookies. Also set httpOnly(true)."
+    metadata:
+      cwe: CWE-614
+      owasp: A05
+
+  - id: http-cookie-not-httponly
+    pattern: 'new\s+Cookie\s*\([^)]*\)(?![^\n]*\.setHttpOnly)'
+    severity: high
+    message: "Cookie without setHttpOnly(true) — accessible via document.cookie, XSS can steal it. Always set httpOnly for session/auth cookies."
+    metadata:
+      cwe: CWE-1004
+      owasp: A05
+
+  # =========================================================================
+  # 59. SERIALIZATION (v7.3.1)
+  # =========================================================================
+  - id: ser-serializable-no-serialversionuid
+    pattern: 'implements\s+Serializable\b'
+    severity: low
+    message: "Serializable without serialVersionUID — JVM auto-generates one based on class structure. Adding a field changes it, breaking backward compatibility. Add `private static final long serialVersionUID = 1L;`."
+    metadata:
+      cwe: CWE-755
+
+  - id: ser-custom-readobject-no-validation
+    pattern: 'private\s+void\s+readObject\s*\(\s*ObjectInputStream'
+    severity: medium
+    message: "Custom readObject() — verify it calls `in.defaultReadObject()` and validates invariants after deserialization. Otherwise attacker can craft a serialized stream with invalid state."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  - id: ser-externalizable-no-validation
+    pattern: 'implements\s+Externalizable\b'
+    severity: medium
+    message: "Externalizable — readExternal() must validate ALL fields after reading. Otherwise attacker can craft streams with invalid state (e.g., negative quantity)."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  - id: ser-writeobject-internal-state
+    pattern: 'private\s+void\s+writeObject\s*\(\s*ObjectOutputStream'
+    severity: low
+    message: "Custom writeObject() — verify it doesn't expose internal mutable state (e.g., direct reference to a List). Otherwise external code can mutate serialized form. Defensive copy on write."
+    metadata:
+      cwe: CWE-502
+
+  - id: ser-objectinputstream
+    pattern: 'new\s+ObjectInputStream\s*\('
+    severity: high
+    message: "ObjectInputStream — Java native deserialization. If the source is user-controlled, RCE via gadget chain (Commons Collections, Spring, etc.). Use JSON / Protocol Buffers instead, or ObjectInputFilter."
+    metadata:
+      cwe: CWE-502
+      owasp: A08
+
+  # =========================================================================
+  # 60. REFLECTION (v7.3.1)
+  # =========================================================================
+  - id: refl-class-forname-variable
+    pattern: 'Class\.forName\s*\(\s*(?!["''])\w+'
+    severity: high
+    message: "Class.forName(variable) — if variable is user-controlled, attacker can load arbitrary classes (RCE via gadget chains). Allowlist class names or use a registry pattern."
+    metadata:
+      cwe: CWE-470
+      owasp: A08
+
+  - id: refl-method-invoke-variable
+    pattern: '\.invoke\s*\(\s*[^,)]+,\s*(?:new\s+Object\s*\[\s*\]\s*\{|[^)]+\))'
+    severity: medium
+    message: "Method.invoke() — if the Method object is derived from user input, attacker can call private methods. Verify the Method is from a fixed allowlist."
+    metadata:
+      cwe: CWE-470
+
+  - id: refl-set-accessible-true
+    pattern: 'setAccessible\s*\(\s*true\s*\)'
+    severity: medium
+    message: "setAccessible(true) — bypasses access modifiers. If used on user-controlled fields/methods, breaks encapsulation and security. Use only on known, fixed reflection targets."
+    metadata:
+      cwe: CWE-470
+
+  - id: refl-get-declared-method-variable
+    pattern: 'getDeclaredMethod\s*\(\s*(?!["''])\w+'
+    severity: medium
+    message: "getDeclaredMethod(variable) — if variable is user-controlled, attacker can access private methods. Allowlist method names."
+    metadata:
+      cwe: CWE-470
+
+  - id: refl-get-declared-field-variable
+    pattern: 'getDeclaredField\s*\(\s*(?!["''])\w+'
+    severity: medium
+    message: "getDeclaredField(variable) — if variable is user-controlled, attacker can access private fields (secrets, internal state). Allowlist field names."
+    metadata:
+      cwe: CWE-470
+
+  # =========================================================================
+  # 61. CLASS LOADING (v7.3.1)
+  # =========================================================================
+  - id: load-urlclassloader-variable
+    pattern: 'new\s+URLClassLoader\s*\(\s*[^)]*URL\s*\[\s*\]'
+    severity: high
+    message: "URLClassLoader with URL array — if URLs are user-controlled, attacker can load arbitrary classes (RCE). Restrict URLs to known paths/jars."
+    metadata:
+      cwe: CWE-470
+      owasp: A08
+
+  - id: load-custom-classloader
+    pattern: 'extends\s+ClassLoader|implements\s+ClassLoader'
+    severity: medium
+    message: "Custom ClassLoader — verify it restricts loading to known paths. A permissive ClassLoader allows RCE via crafted class files."
+    metadata:
+      cwe: CWE-470
+
+  - id: load-serviceloader-no-filter
+    pattern: 'ServiceLoader\.load\s*\('
+    severity: low
+    message: "ServiceLoader.load() — loads services from META-INF/services. If the classpath is user-controlled (e.g., plugin system), attacker can inject malicious services. Filter or restrict classpath."
+    metadata:
+      cwe: CWE-470
+
+  # =========================================================================
+  # 62. JMX / JNDI (v7.3.1)
+  # =========================================================================
+  - id: jmx-mbean-exposed-no-auth
+    pattern: 'registerMBean\s*\(|createMBean\s*\('
+    severity: medium
+    message: "MBean registered — verify JMX connector has authentication. Default JMX has no auth; remote MBean invocation = RCE."
+    metadata:
+      cwe: CWE-306
+      owasp: A01
+
+  - id: jndi-initialcontext-variable
+    pattern: 'new\s+InitialContext\s*\(\s*\)\s*\.\s*(?:lookup|bind|rebind)\s*\(\s*(?!["''])\w+'
+    severity: critical
+    message: "JNDI lookup with user-controlled name — RCE via LDAP/RMI gadget (Log4Shell pattern). Never pass user input to InitialContext.lookup()."
+    metadata:
+      cwe: CWE-74
+      owasp: A03
+
+  - id: jndi-rmi-no-ssl
+    pattern: 'LocateRegistry\.createRegistry\s*\('
+    severity: high
+    message: "RMI Registry — verify SSL/TLS is configured. Plain RMI allows MITM and remote code execution via deserialization."
+    metadata:
+      cwe: CWE-319
+      owasp: A02
+
+  - id: jndi-datasource-jndi-lookup
+    pattern: 'ctx\.lookup\s*\(\s*["''][^"'']*(?:ldap|rmi|dns|iiop)://'
+    severity: high
+    message: "JNDI lookup with LDAP/RMI/DNS URL — if URL is user-influenced, RCE via gadget chain. Use local JNDI names only, or configure com.sun.jndi.ldap.object.trustURLCodebase=false."
+    metadata:
+      cwe: CWE-74
+      owasp: A03
+
+  # =========================================================================
+  # 63. SPRING SECURITY MISCONFIG (v7.3.1)
+  # =========================================================================
+  - id: sec-permit-all
+    pattern: '\.permitAll\s*\(\s*\)'
+    severity: high
+    message: ".permitAll() — bypasses authentication for this URL pattern. Verify it's only on public endpoints (/login, /health). Never on /api/**."
+    metadata:
+      cwe: CWE-862
+      owasp: A01
+
+  - id: sec-any-request-permit-all
+    pattern: 'anyRequest\s*\(\s*\)\s*\.\s*permitAll\s*\(\s*\)'
+    severity: critical
+    message: "anyRequest().permitAll() — disables auth for ALL requests. Use .authenticated() or .hasRole(...) as the catch-all."
+    metadata:
+      cwe: CWE-862
+      owasp: A01
+
+  - id: sec-antmatcher-too-broad
+    pattern: 'antMatchers\s*\(\s*["'']\*\*["'']'
+    severity: high
+    message: "antMatchers(\"/**\") — matches ALL URLs. Narrow the pattern or the rule will shadow all subsequent matchers."
+    metadata:
+      cwe: CWE-862
+
+  - id: sec-password-encoder-noop
+    pattern: 'NoOpPasswordEncoder|PasswordEncoder\.noop\s*\(\s*\)'
+    severity: critical
+    message: "NoOpPasswordEncoder — stores passwords in PLAINTEXT. Use BCryptPasswordEncoder (or Argon2PasswordEncoder for new code)."
+    metadata:
+      cwe: CWE-256
+      owasp: A02
+
+  - id: sec-bcrypt-strength-low
+    pattern: 'new\s+BCryptPasswordEncoder\s*\(\s*(?:[1-9]|10|11)\s*\)'
+    severity: medium
+    message: "BCrypt strength < 12 — too weak for production. Use 12 (default) or higher. Each +1 doubles compute time."
+    metadata:
+      cwe: CWE-916
+      owasp: A02
+
+  - id: sec-session-fixed-protection-disabled
+    pattern: 'sessionManagement\s*\(\s*\)\s*\.\s*sessionFixation\s*\(\s*\)\s*\.\s*none\s*\(\s*\)'
+    severity: high
+    message: "Session fixation protection disabled — attacker can steal session by pre-setting JSESSIONID. Use .changeSessionId() (default in modern Spring)."
+    metadata:
+      cwe: CWE-384
+      owasp: A07
+
+  - id: sec-session-timeout-too-long
+    pattern: 'setMaxInactiveInterval\s*\(\s*(?:[7-9]\d{3,}|\d{5,})\s*\)|session\.timeout\s*=\s*(?:[7-9]\d{3,}|\d{5,})'
+    severity: medium
+    message: "Session timeout > 1 hour — increases window for session hijacking. Use 30 minutes (1800s) for typical apps, 15 min for high-security."
+    metadata:
+      cwe: CWE-613
+      owasp: A07
+
+  - id: sec-same-site-none
+    pattern: 'sameSite\s*=\s*["'']None["'']'
+    severity: high
+    message: "SameSite=None — cookie sent on cross-site requests. Requires Secure flag, otherwise browser rejects. Use SameSite=Lax (default) or Strict for session cookies."
+    metadata:
+      cwe: CWE-1275
+      owasp: A05

@@ -1,6 +1,6 @@
-# LoomScan v7.1 🕷️
+# LoomScan v7.3.2 🕷️
 
-> **Static + Test + Constraint Analysis** — 2,266 rules across 42 packs covering 24 languages. 76+ detection engines. **20/20 (100%) vulnerability detection rate.** Free, offline, production-ready. Rich CLI display with real-time progress. Rust core for 10-50× faster scanning. Pre-merge branch analysis with blast radius. CVE enrichment (16 CWEs, 40+ CVEs). Runtime error scanner. AI/LLM security. Integer overflow detection. Latest CVE rules (2024-2025). VS Code + JetBrains extensions.
+> **Static + Test + Constraint Analysis** — 2,473 rules across 42 packs covering 24 languages. 76+ detection engines. **20/20 (100%) vulnerability detection rate.** Free, offline, production-ready. Rich CLI display with real-time progress. Rust core for 10-50× faster scanning. Pre-merge branch analysis with blast radius. CVE enrichment (16 CWEs, 40+ CVEs). Runtime error scanner. AI/LLM security. Integer overflow detection. Latest CVE rules (2024-2025). VS Code + JetBrains extensions.
 
 ## Quick Start
 
@@ -25,7 +25,7 @@ loomscan doctor
 
 | Tier | Command | What You Get |
 |------|---------|-------------|
-| **1. Basic** | `pip install loomscan` | All 2,254 rules, Rich CLI display, 75+ engines, HTML/SARIF/JSON reports |
+| **1. Basic** | `pip install loomscan` | All 2,473 rules, Rich CLI display, 75+ engines, HTML/SARIF/JSON reports |
 | **2. Full** | `pip install loomscan[full]` | + tree-sitter (CPG/def-use), Rust core (10-50× faster), TUI, pillow |
 | **3. All** | `pip install loomscan[all]` | + semgrep, mutation testing, LLM verify, fuzz, premium image rendering |
 
@@ -36,7 +36,7 @@ When you run `loomscan check --full`, ALL of these execute:
 ### Analysis Modules (18 total)
 | Module | What It Detects |
 |--------|----------------|
-| L0 Fast (SAST) | 2,254 YAML rules via Rust/Python engine |
+| L0 Fast (SAST) | 2,473 YAML rules via Rust/Python engine |
 | Secrets | 275 secret patterns (AWS, Stripe, GitHub, +200 more) |
 | Taint Tracking | Interprocedural source→sink (Python, JS, Java, Go) |
 | CPG Queries | Code Property Graph: taint flows, unused vars, auth patterns |
@@ -75,7 +75,7 @@ When you run `loomscan check --full`, ALL of these execute:
 | 3 | Hardcoded Secret | ✅ | Regex + entropy |
 | 4 | Missing Auth | ✅ | Auth detector + BL |
 | 5 | Race Condition (TOCTOU) | ✅ | TOCTOU detector (AST) |
-| 6 | Integer Overflow | ❌ | Needs type inference (v7.1) |
+| 6 | Integer Overflow | ❌ | Needs type inference (v7.2) |
 | 7 | Business Logic (neg qty) | ✅ | Domain-aware BL miner |
 | 8 | Missing Transaction | ✅ | Typestate protocol |
 | 9 | Log Injection | ✅ | Code quality + CPG |
@@ -203,7 +203,7 @@ After every scan, LoomScan generates:
 
 Reports are saved to `.loomscan-reports/`. HTML auto-opens in browser.
 
-## Rule Packs (42 packs, 2,254 rules)
+## Rule Packs (42 packs, 2,473 rules)
 
 | Category | Packs | Rules |
 |----------|-------|-------|
@@ -415,7 +415,7 @@ LoomScan detects **20 of 20** common vulnerability classes (100%):
 | Race Condition (TOCTOU) | CWE-367 | AST-based TOCTOU detector |
 | Business Logic (neg qty) | CWE-840 | Domain-aware BL miner |
 | Missing Transaction | CWE-664 | Typestate protocol |
-| Integer Overflow | CWE-190 | **v7.1: Integer overflow detector** |
+| Integer Overflow | CWE-190 | **v7.2: Integer overflow detector** |
 | Timing Attack | CWE-208 | YAML rules (non-constant-time comparison) |
 
 ### Resource & Performance (3 classes)
@@ -424,6 +424,34 @@ LoomScan detects **20 of 20** common vulnerability classes (100%):
 | Resource Leak | CWE-404 | Typestate (file/connection/session protocols) |
 | ReDoS | CWE-1333 | YAML rules (nested quantifiers) |
 | Denial of Service | CWE-400 | YAML rules (OOM patterns, findAll, unbounded cache) |
+
+### Database Anti-Patterns (v7.3 — unique, no competitor has this)
+LoomScan is the **only SAST tool** that catches DB architectural anti-patterns in addition to SQL injection. v7.3 adds 65 YAML rules + 17 BL-miner patterns + dead-persistence detection across 8 categories:
+
+| Category | Examples | Detection Method |
+|----------|----------|------------------|
+| **Transaction management** | `@Transactional` without `readOnly`/`rollbackFor`/`timeout` | 5 YAML rules |
+| **Query inefficiency** | `findAll().size()`, `SELECT *`, JOIN FETCH without WHERE | 9 YAML rules |
+| **JPA/EntityManager misuse** | `merge(new ...)`, manual `flush()`, `@Query(UPDATE)` without `@Modifying` | 5 YAML rules |
+| **JPA entity design** | `@OneToMany` without `mappedBy`, `@Lob` without LAZY fetch | 5 YAML rules |
+| **Locking & concurrency** | `PESSIMISTIC_WRITE` without timeout, `FOR UPDATE` without WHERE | 3 YAML rules |
+| **Hibernate-specific** | deprecated `Criteria.list()`, `Query.iterate()` N+1 | 3 YAML rules |
+| **Save patterns** | `save()` in loop, `saveAndFlush()`, DELETE FROM without WHERE | 5 YAML rules |
+| **Cache & migration** | `@Cacheable` without `@CacheEvict`, `ddl-auto=update`, Liquibase `dropAll()` | 7 YAML rules |
+| **Index & query plan** | `LIKE '%...'` leading wildcard, `NOT IN (SELECT...)`, `DISTINCT` with JOIN | 4 YAML rules |
+| **Spring Data naming** | `findBy...Containing` (LIKE %...%), `findBy...IgnoreCase` (LOWER()) | 4 YAML rules |
+| **BL-miner DB patterns** | load-all-for-count, load-entity-for-one-field, N+1-in-loop, read-modify-write-no-lock | 17 BL-miner patterns |
+| **Dead persistence** | Entity saved but never read anywhere | codebase_understanding entity tracking |
+
+### Production-Error Source Detection (v7.3)
+Catches the 4 production errors (Jackson coercion, Invalid UUID, Enum constant, 57s timeout) **in source code BEFORE they reach production**:
+
+| Production Error | Source Rule | Detection |
+|------------------|-------------|-----------|
+| `No enum constant` 500 | `java-enum-valueof-without-validation` | `Enum.valueOf(userInput)` without check |
+| `Invalid UUID string: undefined` | `java-uuid-fromstring-no-try` | `UUID.fromString(userInput)` without try/catch |
+| `Cannot coerce empty String` | `java-jackson-coerce-empty-string-config` | Jackson CoercionConfig check |
+| 57-second timeout | `java-sync-blocking-endpoint-no-timeout`, `java-resttemplate-no-timeout`, `java-webclient-no-timeout`, `java-httpclient-no-timeout`, `java-thread-sleep-in-request`, `java-multipart-endpoint-no-async` | 6 source rules for timeout-prone patterns |
 
 ### Runtime Error Detection (unique — no competitor has this)
 | Error | Source | Detection |

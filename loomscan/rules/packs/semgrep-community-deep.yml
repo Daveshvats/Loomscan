@@ -210,9 +210,11 @@ rules:
   metadata:
     cwe: CWE-327
 - id: sgpy-secrets-token
-  pattern: secrets\.token_(?:urlsafe|hex)\s*\(\s*\d{2,}\s*\)
+  # v7.3.2: DISABLED — flags GOOD code as a finding. Same FP issue as py-secrets-good.
+  # pattern: secrets\.token_(?:urlsafe|hex)\s*\(\s*\d{2,}\s*\)
+  pattern: '(?!x)x'  # never matches
   severity: low
-  message: "secrets.token \u2014 good practice, verify length"
+  message: "secrets.token — good practice (informational, disabled in v7.3.2)"
   metadata:
     cwe: CWE-338
 - id: sgpy-random-choice-security
@@ -1002,9 +1004,10 @@ rules:
   metadata:
     cwe: CWE-829
 - id: sgi-docker-no-healthcheck
-  pattern: (?!.*HEALTHCHECK)
+  # v7.3.2: Restrict to Dockerfile FROM/ADD/COPY/RUN lines (otherwise fires on EVERY line of every file)
+  pattern: '^(?:FROM|ADD|COPY|RUN|CMD|ENTRYPOINT|ENV|WORKDIR|EXPOSE|VOLUME|USER|ARG|LABEL|MAINTAINER|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL)\b'
   severity: low
-  message: Dockerfile missing HEALTHCHECK
+  message: Dockerfile detected — verify HEALTHCHECK instruction is present (missing HEALTHCHECK means orchestrator can't detect unhealthy containers)
   metadata:
     cwe: CWE-1061
 - id: sgi-k8s-privileged

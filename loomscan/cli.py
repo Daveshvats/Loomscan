@@ -112,7 +112,7 @@ def quickstart(repo: str, open_dashboard: bool):
 
     This is the fastest way to try LoomScan on your codebase:
 
-    \\b
+    \b
       loomscan quickstart /path/to/your/code
 
     It will:
@@ -1154,6 +1154,9 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
         uncertain_findings = [f for f in result.findings
                              if hasattr(f, 'confidence') and 0.3 <= f.confidence <= 0.7]
         result.findings = uncertain_findings
+        # v7.2: Also slice decisions to match (was zipping mismatched lists)
+        if hasattr(result, 'decisions') and result.decisions:
+            result.decisions = result.decisions[:len(uncertain_findings)]
         click.echo(f"Showing {len(uncertain_findings)} uncertain findings (30-70% confidence):", err=True)
 
     # v4.33: --sarif flag — generate SARIF from the live PipelineResult.
@@ -2089,9 +2092,9 @@ def baseline_create(repo: str):
     """
     repo_root = Path(repo).resolve()
     config = STCAConfig.from_file(find_config(repo_root))
-    # run check without baseline to capture all current findings
+    # v7.2: Use run_full() (was run() which only scans git diff — captures almost nothing on clean tree)
     orch = Orchestrator(repo_root, config, use_baseline=False)
-    result = orch.run()
+    result = orch.run_full()
     bl = Baseline(repo_root)
     count = bl.create(result.findings)
     click.echo(f"Baseline created with {count} findings.")

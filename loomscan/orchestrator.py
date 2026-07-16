@@ -437,9 +437,9 @@ class Orchestrator:
 
         # Discover ALL source files and create synthetic diff hunks
         # v5.18: Also respect config.workspace_exclude (from --exclude flag or .loomscan.yaml)
-        skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules",
-                     ".loomscan-cache", ".loomscan-reports", ".loomscan-fixes", "build",
-                     "dist", ".pytest_cache", "coverage"}
+        # v7.2: Use unified skip_dirs from _paths.py (fixes feedback-loop bug)
+        from ._paths import DEFAULT_SKIP_DIRS, is_loomscan_artifact
+        skip_dirs = DEFAULT_SKIP_DIRS
         source_extensions = {".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java",
                              ".c", ".cpp", ".cc", ".h", ".hpp", ".hxx",
                              ".tf", ".yaml", ".yml", ".json", ".env",
@@ -453,6 +453,9 @@ class Orchestrator:
             if not p.is_file():
                 continue
             if any(part in skip_dirs for part in p.parts):
+                continue
+            # v7.2: Skip LoomScan artifact files (prevents feedback loop)
+            if is_loomscan_artifact(p):
                 continue
             # v5.18: Check custom exclude patterns
             rel_path = str(p.relative_to(self.repo_root))
@@ -544,6 +547,8 @@ class Orchestrator:
         # Dedupe — v2.9: normalized dedup that strips L0.{category}. prefix
         # so the same finding from multiple scanners (crypto/concurrency/auth/etc)
         # collapses into one
+        # v7.2.1: Also dedup functional duplicates — same pattern + file + line
+        # but different rule_id (e.g. eval( matches 6 different packs)
         seen = set()
         unique_findings: List[Finding] = []
         for f in result.findings:
@@ -552,12 +557,17 @@ class Orchestrator:
             parts = f.rule_id.split(".")
             if len(parts) > 2 and parts[0] == "L0" and parts[1] in (
                 "state", "concurrency", "crypto", "modern", "idor", "cq", "biz",
-                "auth", "ast", "taint", "bl", "v4"
+                "auth", "ast", "taint", "bl", "v4", "yaml", "semgrep", "deepflow",
+                "toctou", "field_taint", "runtime"
             ):
                 normalized_rule = ".".join(parts[2:])
             # Also normalize file path (remove any leading ./)
             normalized_file = f.file.lstrip("./")
-            dedup_key = (normalized_rule, normalized_file, f.start_line)
+            # v7.2.1: Functional dedup — also hash by message snippet (first 40 chars)
+            # This catches cases where different rule_ids produce the same finding
+            # at the same location with the same message
+            msg_hash = f.message[:40] if f.message else ""
+            dedup_key = (normalized_rule, normalized_file, f.start_line, msg_hash)
             if dedup_key not in seen:
                 seen.add(dedup_key)
                 unique_findings.append(f)
@@ -1014,6 +1024,18 @@ class Orchestrator:
                 "new": new_count, "recurring": recurring_count,
                 "total_in_store": self.issue_store.stats()["total_issues"],
             }
+            # v7.2: Suppress findings marked as false_positive in the issue store
+            try:
+                fp_fingerprints = self.issue_store.get_false_positive_fingerprints()
+                if fp_fingerprints:
+                    before = len(result.findings)
+                    result.findings = [f for f in result.findings
+                                     if f.fingerprint not in fp_fingerprints]
+                    suppressed = before - len(result.findings)
+                    if suppressed > 0 and hasattr(result, 'suppressed_count'):
+                        result.suppressed_count += suppressed
+            except Exception:
+                pass  # Issue store may not support FP queries
         except Exception as e:
             self._scanner_error("run", e)
 
@@ -1817,8 +1839,10 @@ class Orchestrator:
             return findings
 
         try:
-            # build CPG for the whole repo (cached after first build)
-            cpg = build_cpg_for_repo_multi(self.repo_root)
+            # v7.2.1: Cache CPG on orchestrator instance — was building twice per scan
+            if not hasattr(self, '_cpg_cache') or self._cpg_cache is None:
+                self._cpg_cache = build_cpg_for_repo_multi(self.repo_root)
+            cpg = self._cpg_cache
             if not cpg.nodes:
                 return findings
             flows = track_taint_cross_file(cpg)
@@ -1912,192 +1936,153 @@ class Orchestrator:
         return findings
 
     def _run_advanced_research_engines(self) -> List[Finding]:
-        """v4.24: Wire all previously-dead-code research engines."""
+        """v4.24: Wire all previously-dead-code research engines.
+        v7.2.1: Parallelized with ThreadPoolExecutor — was sequential (12 engines in one thread).
+        """
         findings: List[Finding] = []
         sev_map = {"critical": Severity.CRITICAL, "high": Severity.HIGH,
                    "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
 
-        # 1. Counterexamples (Z3-based)
-        try:
-            from .counterexamples import generate_counterexamples_for_file
-            py_files = [p for p in self.repo_root.rglob("*.py")
-                        if not any(d in p.parts for d in (".git", "__pycache__", ".venv", "venv", "node_modules", ".loomscan-cache", "build", "dist", "tests", "test"))
-                        and p.stat().st_size < 50000]
-            for py_file in py_files[:30]:
-                try:
-                    for ce in generate_counterexamples_for_file(py_file):
-                        findings.append(Finding(layer=LayerID.L3_INVARIANTS, rule_id=f"L3.counterexample.{ce.invariant}",
-                            message=ce.description, file=ce.file, start_line=ce.line,
-                            severity=sev_map.get(ce.severity, Severity.MEDIUM), confidence=0.7,
-                            blast_radius=BlastRadius.FUNCTION, exploitability=0.5,
-                            category=Category.CORRECTNESS, cwe="CWE-839",
-                            fix_suggestion=ce.suggestion, raw={"invariant": ce.invariant, "function": ce.function}))
-                except Exception: pass
-        except Exception as e: self._scanner_error("advanced_engines.counterexamples", e)
+        # v7.2.1: Collect all source files once (was 4 separate rglob walks)
+        from ._paths import DEFAULT_SKIP_DIRS, is_loomscan_artifact
+        skip = DEFAULT_SKIP_DIRS
+        py_files = []
+        all_source_files = []
+        for p in self.repo_root.rglob("*"):
+            if not p.is_file():
+                continue
+            if any(d in p.parts for d in skip):
+                continue
+            if is_loomscan_artifact(p):
+                continue
+            if p.suffix == '.py' and p.stat().st_size < 50000:
+                py_files.append(p)
+            all_source_files.append(p)
+            if len(py_files) >= 200:
+                break  # Cap for performance
 
-        # 2. Concurrency
-        try:
-            from .concurrency import analyze_repo_concurrency
-            for issue in analyze_repo_concurrency(self.repo_root):
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id=f"L0.concurrency.{issue.rule_id}",
-                    message=issue.description, file=issue.file, start_line=issue.line,
-                    severity=sev_map.get(issue.severity, Severity.MEDIUM), confidence=issue.confidence,
-                    blast_radius=BlastRadius.MODULE, exploitability=0.6,
-                    category=Category.CONCURRENCY, cwe=issue.cwe, fix_suggestion=issue.fix, raw={"language": issue.language}))
-        except Exception as e: self._scanner_error("advanced_engines.concurrency", e)
-
-        # 3. Dead code
-        try:
-            from .deadcode import DeadCodeAnalyzer
-            analyzer = DeadCodeAnalyzer(self.repo_root)
-            analyzer.discover_functions(max_files=_max_files(200))
-            analyzer.load_trace()
-            for fi in analyzer.get_dead_code():
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id="L0.deadcode.unused_function",
-                    message=f"Dead code: function '{fi.name}' is never called", file=fi.file, start_line=fi.line,
-                    severity=Severity.LOW, confidence=0.7, blast_radius=BlastRadius.FUNCTION,
-                    exploitability=0.0, category=Category.MAINTAINABILITY, cwe="CWE-1164",
-                    fix_suggestion="Remove the unused function or add a caller", raw={"function": fi.name}))
-        except Exception as e: self._scanner_error("advanced_engines.deadcode", e)
-
-        # 4. Duplication
-        try:
-            from .duplication import find_duplicates
-            for dup in find_duplicates(self.repo_root, min_tokens=50):
-                findings.append(Finding(layer=LayerID.L0_FAST, rule_id="L0.duplication.code_clone",
-                    message=f"Code duplication: {dup.length} tokens in {dup.file_a} (L{dup.start_a}) and {dup.file_b} (L{dup.start_b})",
-                    file=dup.file_a, start_line=dup.start_a, severity=Severity.LOW, confidence=0.8,
-                    blast_radius=BlastRadius.MODULE, exploitability=0.0, category=Category.MAINTAINABILITY,
-                    cwe="CWE-1047", fix_suggestion="Extract duplicated code into a shared function",
-                    raw={"file_a": dup.file_a, "start_a": dup.start_a, "file_b": dup.file_b, "start_b": dup.start_b, "length": dup.length}))
-        except Exception as e: self._scanner_error("advanced_engines.duplication", e)
-
-        # 5. Runtime verification
-        try:
-            from .runtime_verification import find_invariant_annotations
-            py_files = [p for p in self.repo_root.rglob("*.py") if not any(d in p.parts for d in (".git", "__pycache__", ".venv", "venv", "node_modules", ".loomscan-cache", "build", "dist"))]
-            for py_file in py_files[:100]:
-                try:
-                    for inv in find_invariant_annotations(py_file):
-                        # v4.30: Convert to Finding (was audit.log only — invisible to users)
-                        findings.append(Finding(
-                            layer=LayerID.L3_INVARIANTS,
-                            rule_id="L3.runtime_invariant",
-                            message=f"Runtime invariant: {inv.get('expression', '')}",
-                            file=str(py_file.relative_to(self.repo_root)),
-                            start_line=inv.get("line", 0),
-                            severity=Severity.LOW,
-                            confidence=0.6,
-                            blast_radius=BlastRadius.FUNCTION,
-                            exploitability=0.2,
-                            category=Category.CORRECTNESS,
-                            cwe="CWE-839",
-                            fix_suggestion="Verify invariant holds for all inputs",
-                            raw={"expression": inv.get("expression", ""),
-                                 "function": inv.get("function", "")}))
-                except Exception: pass
-        except Exception as e: self._scanner_error("advanced_engines.runtime_verification", e)
-
-        # 6. Knowledge base stats
-        try:
-            from .knowledge_base import knowledge_stats
-            self.audit.log("knowledge_base_stats", knowledge_stats())
-        except Exception as e: self._scanner_error("advanced_engines.knowledge_base", e)
-
-        # 7. Impact analysis
-        try:
-            from .impact_analysis import ImpactAnalyzer
-            analyzer = ImpactAnalyzer(self.repo_root)
-            n_funcs = analyzer.build_call_graph(max_files=_max_files(200))
-            self.audit.log("impact_graph_built", {"nodes": n_funcs, "edges": sum(len(v) for v in analyzer.call_graph.values())})
-        except Exception as e: self._scanner_error("advanced_engines.impact_analysis", e)
-
-        # 8. Root cause clustering
-        try:
-            from .root_cause import find_root_causes, rca_stats
-            clusters = find_root_causes(findings)
-            if clusters:
-                self.audit.log("root_cause_clusters", rca_stats(clusters))
-                if not hasattr(self, "_root_cause_clusters"): self._root_cause_clusters = []
-                self._root_cause_clusters.extend(clusters)
-        except Exception as e: self._scanner_error("advanced_engines.root_cause", e)
-
-        # 9. v4.24: Wire multi_language_advanced.analyze_repo_advanced
-        try:
-            from .multi_language_advanced import analyze_repo_advanced
-            for sf in analyze_repo_advanced(self.repo_root, max_files=_max_files(50)):
-                findings.append(Finding(layer=LayerID.L3_INVARIANTS, rule_id=f"L3.symbolic.{sf.rule_id}",
-                    message=sf.description, file=sf.file, start_line=sf.line,
-                    severity=sev_map.get(sf.severity, Severity.MEDIUM), confidence=0.7,
-                    blast_radius=BlastRadius.FUNCTION, exploitability=0.5,
-                    category=Category.CORRECTNESS, cwe="CWE-839",
-                    fix_suggestion="Fix the invariant violation",
-                    raw={"language": sf.language, "function": sf.function, "counterexample": sf.counterexample}))
-        except Exception as e: self._scanner_error("advanced_engines.multi_language_advanced", e)
-
-        # 10. v4.24: Wire dynamic_invariants
-        try:
-            from .dynamic_invariants import run_dynamic_invariant_inference
-            py_files = [p for p in self.repo_root.rglob("*.py")
-                        if not any(d in p.parts for d in (".git", "__pycache__", ".venv", "venv", "node_modules", ".loomscan-cache", "build", "dist", "tests", "test"))
-                        and p.stat().st_size < 50000]
-            for py_file in py_files[:30]:
-                try:
-                    for inv in run_dynamic_invariant_inference(py_file):
-                        findings.append(Finding(layer=LayerID.L3_INVARIANTS,
-                            rule_id=f"L3.dynamic_invariant.{inv.get('invariant', 'unknown')}",
-                            message=f"Dynamic invariant: {inv.get('invariant', '')}",
-                            file=str(py_file.relative_to(self.repo_root)),
-                            start_line=inv.get("line", 0),
-                            severity=Severity.LOW, confidence=0.6,
-                            blast_radius=BlastRadius.FUNCTION, exploitability=0.3,
-                            category=Category.CORRECTNESS, cwe="CWE-839",
-                            fix_suggestion="Verify invariant holds", raw={"invariant": inv.get("invariant", ""), "function": inv.get("function", "")}))
-                except Exception: pass
-        except Exception as e: self._scanner_error("advanced_engines.dynamic_invariants", e)
-
-        # 11. v4.24: Wire llm_verify (only if LLM client available)
-        try:
-            from .llm_verify import llm_verify_function
-            from .llm.client import LLMClient
-            try: llm_client = LLMClient()
-            except Exception: llm_client = None
-            if llm_client is not None:
-                import ast as pyast
-                py_files = [p for p in self.repo_root.rglob("*.py")
-                            if not any(d in p.parts for d in (".git", "__pycache__", ".venv", "venv", "node_modules", ".loomscan-cache", "build", "dist", "tests", "test"))
-                            and p.stat().st_size < 30000]
-                for py_file in py_files[:10]:
+        # v7.2.1: Each engine is a function that returns List[Finding]
+        def _engine_counterexamples():
+            results = []
+            try:
+                from .counterexamples import generate_counterexamples_for_file
+                for py_file in py_files[:30]:
                     try:
-                        source = py_file.read_text(encoding="utf-8", errors="replace")
-                        tree = pyast.parse(source)
-                        for node in pyast.walk(tree):
-                            if not isinstance(node, (pyast.FunctionDef, pyast.AsyncFunctionDef)): continue
-                            try:
-                                func_body = pyast.unparse(node)
-                                for vb in llm_verify_function(py_file, node.name, func_body, llm_client=llm_client, repo_root=self.repo_root):
-                                    findings.append(Finding(layer=LayerID.L0_FAST,
-                                        rule_id=f"L0.llm_verify.{vb.hypothesis.bug_type}",
-                                        message=vb.description, file=str(py_file.relative_to(self.repo_root)),
-                                        start_line=node.lineno, severity=Severity.HIGH, confidence=0.85,
-                                        blast_radius=BlastRadius.FUNCTION, exploitability=0.8,
-                                        category=Category.SECURITY, cwe=vb.hypothesis.cwe,
-                                        fix_suggestion=vb.hypothesis.fix, raw={"function": node.name}))
-                            except Exception: pass
+                        for ce in generate_counterexamples_for_file(py_file):
+                            results.append(Finding(layer=LayerID.L3_INVARIANTS, rule_id=f"L3.counterexample.{ce.invariant}",
+                                message=ce.description, file=ce.file, start_line=ce.line,
+                                severity=sev_map.get(ce.severity, Severity.MEDIUM), confidence=0.7,
+                                blast_radius=BlastRadius.FUNCTION, exploitability=0.5,
+                                category=Category.CORRECTNESS, cwe="CWE-839",
+                                fix_suggestion=ce.suggestion, raw={"invariant": ce.invariant, "function": ce.function}))
                     except Exception: pass
-        except Exception as e: self._scanner_error("advanced_engines.llm_verify", e)
+            except Exception as e: self._scanner_error("advanced_engines.counterexamples", e)
+            return results
 
-        # 12. v4.25: Wire InterproceduralTaintAnalyzer (was 1240 lines of dead code)
-        # v4.26: Use public analyze_repo() instead of private _analyze_file() —
-        # analyze_repo does 3 steps (call graph → discover sources → loop),
-        # so custom source wrappers are detected, not just LANGUAGE_KNOWLEDGE.
-        try:
-            from .interprocedural import InterproceduralTaintAnalyzer
-            analyzer = InterproceduralTaintAnalyzer("python")
-            for flow in analyzer.analyze_repo(self.repo_root, max_files=_max_files(200)):
-                findings.append(Finding(
-                    layer=LayerID.L0_FAST,
-                    rule_id=f"L0.interproc_taint.{flow.sink_function}",
+        def _engine_concurrency():
+            results = []
+            try:
+                from .concurrency import analyze_repo_concurrency
+                for issue in analyze_repo_concurrency(self.repo_root):
+                    results.append(Finding(layer=LayerID.L0_FAST, rule_id=f"L0.concurrency.{issue.rule_id}",
+                        message=issue.description, file=issue.file, start_line=issue.line,
+                        severity=sev_map.get(issue.severity, Severity.MEDIUM), confidence=issue.confidence,
+                        blast_radius=BlastRadius.MODULE, exploitability=0.6,
+                        category=Category.CONCURRENCY, cwe=issue.cwe, fix_suggestion=issue.fix, raw={"language": issue.language}))
+            except Exception as e: self._scanner_error("advanced_engines.concurrency", e)
+            return results
+
+        def _engine_deadcode():
+            results = []
+            try:
+                from .deadcode import DeadCodeAnalyzer
+                analyzer = DeadCodeAnalyzer(self.repo_root)
+                analyzer.discover_functions(max_files=_max_files(200))
+                analyzer.load_trace()
+                for fi in analyzer.get_dead_code():
+                    results.append(Finding(layer=LayerID.L0_FAST, rule_id="L0.deadcode.unused_function",
+                        message=f"Dead code: function '{fi.name}' is never called", file=fi.file, start_line=fi.line,
+                        severity=Severity.LOW, confidence=0.7, blast_radius=BlastRadius.FUNCTION,
+                        exploitability=0.0, category=Category.MAINTAINABILITY, cwe="CWE-1164",
+                        fix_suggestion="Remove the unused function or add a caller", raw={"function": fi.name}))
+            except Exception as e: self._scanner_error("advanced_engines.deadcode", e)
+            return results
+
+        def _engine_duplication():
+            results = []
+            try:
+                from .duplication import find_duplicates
+                for dup in find_duplicates(self.repo_root, min_tokens=50):
+                    results.append(Finding(layer=LayerID.L0_FAST, rule_id="L0.duplication.code_clone",
+                        message=f"Code duplication: {dup.length} tokens in {dup.file_a} (L{dup.start_a}) and {dup.file_b} (L{dup.start_b})",
+                        file=dup.file_a, start_line=dup.start_a, severity=Severity.LOW, confidence=0.8,
+                        blast_radius=BlastRadius.MODULE, exploitability=0.0, category=Category.MAINTAINABILITY,
+                        cwe="CWE-1047", fix_suggestion="Extract duplicated code into a shared function",
+                        raw={"file_a": dup.file_a, "start_a": dup.start_a, "file_b": dup.file_b, "start_b": dup.start_b, "length": dup.length}))
+            except Exception as e: self._scanner_error("advanced_engines.duplication", e)
+            return results
+
+        def _engine_runtime_verification():
+            results = []
+            try:
+                from .runtime_verification import find_invariant_annotations
+                for py_file in py_files[:100]:
+                    try:
+                        for inv in find_invariant_annotations(py_file):
+                            results.append(Finding(layer=LayerID.L3_INVARIANTS, rule_id="L3.runtime_invariant",
+                                message=f"Runtime invariant: {inv.get('expression', '')}",
+                                file=str(py_file.relative_to(self.repo_root)), start_line=inv.get("line", 0),
+                                severity=Severity.LOW, confidence=0.6, blast_radius=BlastRadius.FUNCTION,
+                                exploitability=0.2, category=Category.CORRECTNESS, cwe="CWE-839",
+                                fix_suggestion="Verify invariant holds for all inputs",
+                                raw={"expression": inv.get("expression", ""), "function": inv.get("function", "")}))
+                    except Exception: pass
+            except Exception as e: self._scanner_error("advanced_engines.runtime_verification", e)
+            return results
+
+        def _engine_multi_language_advanced():
+            results = []
+            try:
+                from .multi_language_advanced import analyze_repo_advanced
+                for sf in analyze_repo_advanced(self.repo_root, max_files=_max_files(50)):
+                    results.append(Finding(layer=LayerID.L3_INVARIANTS, rule_id=f"L3.symbolic.{sf.rule_id}",
+                        message=sf.description, file=sf.file, start_line=sf.line,
+                        severity=sev_map.get(sf.severity, Severity.MEDIUM), confidence=0.7,
+                        blast_radius=BlastRadius.FUNCTION, exploitability=0.5,
+                        category=Category.CORRECTNESS, cwe="CWE-839",
+                        fix_suggestion="Fix the invariant violation",
+                        raw={"language": sf.language, "function": sf.function, "counterexample": sf.counterexample}))
+            except Exception as e: self._scanner_error("advanced_engines.multi_language_advanced", e)
+            return results
+
+        def _engine_dynamic_invariants():
+            results = []
+            try:
+                from .dynamic_invariants import run_dynamic_invariant_inference
+                for py_file in py_files[:30]:
+                    try:
+                        for inv in run_dynamic_invariant_inference(py_file):
+                            results.append(Finding(layer=LayerID.L3_INVARIANTS,
+                                rule_id=f"L3.dynamic_invariant.{inv.get('invariant', 'unknown')}",
+                                message=f"Dynamic invariant: {inv.get('invariant', '')}",
+                                file=str(py_file.relative_to(self.repo_root)), start_line=inv.get("line", 0),
+                                severity=Severity.LOW, confidence=0.6, blast_radius=BlastRadius.FUNCTION,
+                                exploitability=0.3, category=Category.CORRECTNESS, cwe="CWE-839",
+                                fix_suggestion="Verify invariant holds",
+                                raw={"invariant": inv.get("invariant", ""), "function": inv.get("function", "")}))
+                    except Exception: pass
+            except Exception as e: self._scanner_error("advanced_engines.dynamic_invariants", e)
+            return results
+
+        def _engine_interprocedural():
+            results = []
+            try:
+                from .interprocedural import InterproceduralTaintAnalyzer
+                analyzer = InterproceduralTaintAnalyzer("python")
+                for flow in analyzer.analyze_repo(self.repo_root, max_files=_max_files(200)):
+                    results.append(Finding(
+                        layer=LayerID.L0_FAST,
+                        rule_id=f"L0.interproc_taint.{flow.sink_function}",
                     message=f"Interprocedural taint: {flow.source_param} -> {flow.sink_function} "
                             f"({flow.sink_type}) at L{flow.sink_line}",
                     file=flow.source_file,
@@ -2115,7 +2100,84 @@ class Orchestrator:
                          "interprocedural": flow.interprocedural,
                          "context_signature": getattr(flow, 'context_signature', ''),
                          "caller_function": getattr(flow, 'caller_function', '')}))
-        except Exception as e: self._scanner_error("advanced_engines.interprocedural", e)
+            except Exception as e: self._scanner_error("advanced_engines.interprocedural", e)
+            return results
+
+        def _engine_llm_verify():
+            results = []
+            try:
+                from .llm_verify import llm_verify_function
+                from .llm.client import LLMClient
+                try: llm_client = LLMClient()
+                except Exception: llm_client = None
+                if llm_client is not None:
+                    import ast as pyast
+                    for py_file in py_files[:10]:
+                        try:
+                            source = py_file.read_text(encoding="utf-8", errors="replace")
+                            tree = pyast.parse(source)
+                            for node in pyast.walk(tree):
+                                if not isinstance(node, (pyast.FunctionDef, pyast.AsyncFunctionDef)): continue
+                                try:
+                                    func_body = pyast.unparse(node)
+                                    for vb in llm_verify_function(py_file, node.name, func_body, llm_client=llm_client, repo_root=self.repo_root):
+                                        results.append(Finding(layer=LayerID.L0_FAST,
+                                            rule_id=f"L0.llm_verify.{vb.hypothesis.bug_type}",
+                                            message=vb.description, file=str(py_file.relative_to(self.repo_root)),
+                                            start_line=node.lineno, severity=Severity.HIGH, confidence=0.85,
+                                            blast_radius=BlastRadius.FUNCTION, exploitability=0.8,
+                                            category=Category.SECURITY, cwe=vb.hypothesis.cwe,
+                                            fix_suggestion=vb.hypothesis.fix, raw={"function": node.name}))
+                                except Exception: pass
+                        except Exception: pass
+            except Exception as e: self._scanner_error("advanced_engines.llm_verify", e)
+            return results
+
+        # v7.2.1: Run all engines in parallel with ThreadPoolExecutor
+        engines = [
+            _engine_counterexamples, _engine_concurrency, _engine_deadcode,
+            _engine_duplication, _engine_runtime_verification,
+            _engine_multi_language_advanced, _engine_dynamic_invariants,
+            _engine_interprocedural, _engine_llm_verify,
+        ]
+
+        import os as _os
+        max_workers = min(4, _os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_name = {executor.submit(engine): engine.__name__ for engine in engines}
+            for future in as_completed(future_to_name):
+                engine_name = future_to_name[future]
+                try:
+                    engine_findings = future.result(timeout=120)
+                    findings.extend(engine_findings)
+                except TimeoutError:
+                    self._scanner_error(f"advanced_engines.{engine_name}", TimeoutError(f"{engine_name} timed out"))
+                except Exception as e:
+                    self._scanner_error(f"advanced_engines.{engine_name}", e)
+
+        # Non-parallel: knowledge base stats (audit only, no findings)
+        try:
+            from .knowledge_base import knowledge_stats
+            self.audit.log("knowledge_base_stats", knowledge_stats())
+        except Exception as e: self._scanner_error("advanced_engines.knowledge_base", e)
+
+        # Non-parallel: impact analysis (audit only, no findings)
+        try:
+            from .impact_analysis import ImpactAnalyzer
+            analyzer = ImpactAnalyzer(self.repo_root)
+            n_funcs = analyzer.build_call_graph(max_files=_max_files(200))
+            self.audit.log("impact_graph_built", {"nodes": n_funcs, "edges": sum(len(v) for v in analyzer.call_graph.values())})
+        except Exception as e: self._scanner_error("advanced_engines.impact_analysis", e)
+
+        # Non-parallel: root cause clustering (depends on findings being collected)
+        try:
+            from .root_cause import find_root_causes, rca_stats
+            clusters = find_root_causes(findings)
+            if clusters:
+                self.audit.log("root_cause_clusters", rca_stats(clusters))
+                if not hasattr(self, "_root_cause_clusters"): self._root_cause_clusters = []
+                self._root_cause_clusters.extend(clusters)
+        except Exception as e: self._scanner_error("advanced_engines.root_cause", e)
 
         return findings
 

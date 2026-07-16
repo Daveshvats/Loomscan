@@ -348,9 +348,10 @@ rules:
   metadata:
     cwe: CWE-829
 - id: owasp-a09-print-credentials
-  pattern: \b(?:print|console\.log|echo|System\.out\.println)\s*\([^)]*(?:password|secret|token|api[_-]?key|credit_card|ssn)
+  # v7.3.2: Tightened to only flag direct secret argument (matches py-print-secret fix)
+  pattern: '(?i)\b(?:print|console\.log|echo|System\.out\.println)\s*\(\s*(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|credit[_-]?card|cvv|ssn)\b'
   severity: critical
-  message: 'OWASP A09: logging credentials'
+  message: 'OWASP A09: logging credentials — secret passed as direct argument to print/log'
   metadata:
     cwe: CWE-532
 - id: owasp-a09-error-message-leak

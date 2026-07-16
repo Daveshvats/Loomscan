@@ -822,9 +822,14 @@ rules:
   metadata:
     cwe: CWE-338
 - id: py-secrets-good
-  pattern: secrets\.(?:token_urlsafe|token_hex|choice)\s*\(
+  # v7.3.2: DISABLED — this rule flags GOOD code (secrets.token_*) as a finding,
+  # which pollutes clean-code scans with false positives. The "good practice"
+  # message belongs in a separate practices report, not in findings.
+  # Kept as a comment for traceability.
+  # pattern: secrets\.(?:token_urlsafe|token_hex|choice)\s*\(
+  pattern: '(?!x)x'  # never matches
   severity: low
-  message: "secrets.* \u2014 good practice"
+  message: "secrets.* — good practice (informational, disabled in v7.3.2)"
   metadata:
     cwe: CWE-338
 - id: py-requests-no-timeout
@@ -1032,15 +1037,17 @@ rules:
   metadata:
     cwe: CWE-532
 - id: py-logging-debug-secret
-  pattern: logging\.debug\s*\([^)]*(?:password|secret|token|api_key|credit_card)
+  # v7.3.2: Tightened to only flag direct secret argument
+  pattern: '(?i)logging\.debug\s*\(\s*(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|credit[_-]?card|cvv|ssn)\b'
   severity: critical
-  message: "logging of secret \u2014 info leak"
+  message: "logging of secret — info leak"
   metadata:
     cwe: CWE-532
 - id: deep-py-print-secret
-  pattern: \bprint\s*\([^)]*(?:password|secret|token|api_key|credit_card)
+  # v7.3.2: Tightened to only flag direct secret argument (matches py-print-secret in python-security.yml)
+  pattern: '(?i)\bprint\s*\(\s*(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token|credit[_-]?card|cvv|ssn)\b'
   severity: critical
-  message: "print of secret \u2014 info leak"
+  message: "print of secret — info leak"
   metadata:
     cwe: CWE-532
 - id: deep-py-hardcoded-password

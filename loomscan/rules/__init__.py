@@ -379,6 +379,9 @@ def get_all_packs_for_files(files: List[str]) -> List[Path]:
         pack_paths.append(get_builtin_pack_path("java-security"))
         pack_paths.append(get_builtin_pack_path("java-frameworks"))
         pack_paths.append(get_builtin_pack_path("java-deep"))  # v4.40
+        # v7.3: Java production-incident prevention (308 rules — DB anti-patterns,
+        # enum/UUID validation, timeout detection, memory leaks, thread safety, etc.)
+        pack_paths.append(get_builtin_pack_path("java-production-incidents"))
     if any(e in (".c", ".cpp", ".cc", ".h", ".hpp") for e in exts):
         pack_paths.append(get_builtin_pack_path("cpp-security"))
     # v4.30: New language pack auto-selection
@@ -435,6 +438,9 @@ def get_all_packs_for_files(files: List[str]) -> List[Path]:
     pack_paths.append(get_builtin_pack_path("semgrep-community-deep"))
     # v5.1: Framework taint is multi-language — always include
     pack_paths.append(get_builtin_pack_path("framework-taint"))
+    # v6.1: AI/LLM security is multi-language — always include (12 rules for
+    # prompt injection, API key exposure, unrestricted tool use, etc.)
+    pack_paths.append(get_builtin_pack_path("ai-security"))
     return pack_paths
 
 

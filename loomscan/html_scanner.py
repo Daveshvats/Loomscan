@@ -60,7 +60,11 @@ def scan_html_config(repo_root: Path) -> List[HTMLSecurityIssue]:
 
 def _scan_html_file(file_path: Path, repo_root: Path) -> List[HTMLSecurityIssue]:
     """Scan an HTML file for missing security headers."""
+    # v7.3.2: Cap file size to prevent OOM on 150MB+ HTML files
+    MAX_HTML_SIZE = 10 * 1024 * 1024  # 10 MB
     try:
+        if file_path.stat().st_size > MAX_HTML_SIZE:
+            return []
         content = file_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
@@ -109,7 +113,11 @@ def _scan_html_file(file_path: Path, repo_root: Path) -> List[HTMLSecurityIssue]
 
 def _scan_env_file(file_path: Path, repo_root: Path) -> List[HTMLSecurityIssue]:
     """Scan .env files for hardcoded secrets."""
+    # v7.3.2: Cap file size — .env files are tiny, but cap to prevent OOM on accidental scan of huge files
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
     try:
+        if file_path.stat().st_size > MAX_FILE_SIZE:
+            return []
         content = file_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
@@ -141,7 +149,11 @@ def _scan_env_file(file_path: Path, repo_root: Path) -> List[HTMLSecurityIssue]:
 
 def _scan_build_config(file_path: Path, repo_root: Path) -> List[HTMLSecurityIssue]:
     """Scan build config for security misconfigs."""
+    # v7.3.2: Cap file size
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
     try:
+        if file_path.stat().st_size > MAX_FILE_SIZE:
+            return []
         content = file_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
@@ -164,7 +176,11 @@ def _scan_build_config(file_path: Path, repo_root: Path) -> List[HTMLSecurityIss
 def _scan_package_json(file_path: Path, repo_root: Path) -> List[HTMLSecurityIssue]:
     """Scan package.json for production issues."""
     import json
+    # v7.3.2: Cap file size
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
     try:
+        if file_path.stat().st_size > MAX_FILE_SIZE:
+            return []
         data = json.loads(file_path.read_text(encoding="utf-8"))
     except Exception:
         return []

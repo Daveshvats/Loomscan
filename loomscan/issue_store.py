@@ -247,5 +247,15 @@ class IssueStore:
             "db_file": str(self.repo_root / ISSUES_DB_FILE),
         }
 
+    def get_false_positive_fingerprints(self) -> set:
+        """v7.2: Return fingerprints of all issues marked as false_positive."""
+        try:
+            cur = self.conn.execute(
+                "SELECT fingerprint FROM issues WHERE state = 'false_positive'"
+            )
+            return {row[0] for row in cur.fetchall()}
+        except Exception:
+            return set()
+
     def close(self):
         self.conn.close()
