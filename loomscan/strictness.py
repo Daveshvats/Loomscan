@@ -52,7 +52,7 @@ Or via CLI:
 from __future__ import annotations
 
 from typing import Dict, List, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -64,6 +64,10 @@ class StrictnessLevel:
     enabled_layers: Set[str]
     enabled_severities: Set[str]  # which severities to report
     block_on: Set[str]  # which decisions block
+    # v7.3.4: warn_on — which decisions produce a non-blocking warning.
+    # Previously this only existed in config.py (dead). Now mirrored here
+    # so should_warn() can consult it per-level.
+    warn_on: Set[str] = field(default_factory=lambda: {"warn"})
     enable_advanced_detection: bool = False  # taint, typestate, etc.
 
 
@@ -169,6 +173,19 @@ def should_block(decision: str, level: int) -> bool:
     """Check if a decision should block at a given strictness level."""
     sl = get_level(level)
     return decision in sl.block_on
+
+
+def should_warn(decision: str, level: int) -> bool:
+    """v7.3.4: Check if a decision should produce a warning (non-blocking) at a given strictness level.
+
+    Previously the `warn_on` config field was dead — it was loaded from .loomscan.yaml
+    but never consulted by any code path. Now wired into strictness.py to mirror
+    `should_block()`. Used by the CLI to print a non-zero-exit-warning without
+    blocking the build.
+    """
+    sl = get_level(level)
+    # A decision warns if it's in warn_on but NOT in block_on (block takes precedence)
+    return decision in sl.warn_on and decision not in sl.block_on
 
 
 def list_levels() -> List[dict]:

@@ -9,7 +9,7 @@ def get_staged_files(repo_root: Path) -> List[Path]:
         result = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
                                 cwd=repo_root, capture_output=True, text=True, check=True)
         return [repo_root / line for line in result.stdout.splitlines() if line.strip() and (repo_root / line).exists()]
-    except: return []
+    except Exception: return []
 
 def run_pre_commit(repo_root: Path, block_only: bool = True, time_budget_ms: int = 3000) -> int:
     start = time.time()

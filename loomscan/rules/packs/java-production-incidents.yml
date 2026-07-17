@@ -573,10 +573,14 @@ rules:
     message: "Static collection — entries never garbage collected. Ensure bounded size or use WeakHashMap/Cache with TTL."
     metadata:
       cwe: CWE-401
-  - id: leak-threadlocal-no-remove
+  - id: leak-threadlocal-static-field
+    # v7.5.3: Renamed from leak-threadlocal-no-remove to avoid duplicate rule ID
+    # (the v7.3.1 version at line 1422 has a better pattern + message).
+    # This rule catches static ThreadLocal fields; the other catches ThreadLocal
+    # instantiation. Both are valid but distinct patterns.
     pattern: 'ThreadLocal\s*<[^>]+>\s+\w+\s*=\s*new\s+ThreadLocal'
     severity: high
-    message: "ThreadLocal without remove() — causes memory leaks in thread pools. Always call remove() in finally block."
+    message: "Static ThreadLocal field — memory leak in thread pools. Always call remove() in finally block."
     metadata:
       cwe: CWE-401
   - id: leak-static-spring-bean
@@ -924,7 +928,13 @@ rules:
       production_error: 57s_timeout
 
   - id: java-thread-sleep-in-request
-    pattern: 'Thread\.sleep\s*\(\s*\d+\s*\)'
+    # v7.3.3: Broader pattern — matches ANY Thread.sleep() call, including:
+    #   Thread.sleep(5000)            — pure integer
+    #   Thread.sleep(50_000)          — Java underscore separator
+    #   Thread.sleep(timeout)         — variable
+    #   Thread.sleep(TimeUnit.SECONDS.toMillis(5))  — computed
+    # Original `Thread\.sleep\s*\(\s*\d+\s*\)` missed all but the first form.
+    pattern: 'Thread\.sleep\s*\('
     severity: high
     message: "Thread.sleep() inside request handler — blocks the worker thread. Use ScheduledExecutor, reactor delay, or @Async. Never sleep in a synchronous request path."
     metadata:

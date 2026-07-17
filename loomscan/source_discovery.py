@@ -57,7 +57,7 @@ def discover_sources_in_file(file_path, repo_root=None):
     if not patterns: return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8", errors="replace")
-    except: return []
+    except Exception: return []
     sources = []
     lines = source.splitlines()
     current_method = ""

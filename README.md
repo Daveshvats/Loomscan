@@ -1,4 +1,4 @@
-# LoomScan v7.3.2 🕷️
+# LoomScan v7.6.0 🕷️
 
 > **Static + Test + Constraint Analysis** — 2,473 rules across 42 packs covering 24 languages. 76+ detection engines. **20/20 (100%) vulnerability detection rate.** Free, offline, production-ready. Rich CLI display with real-time progress. Rust core for 10-50× faster scanning. Pre-merge branch analysis with blast radius. CVE enrichment (16 CWEs, 40+ CVEs). Runtime error scanner. AI/LLM security. Integer overflow detection. Latest CVE rules (2024-2025). VS Code + JetBrains extensions.
 
@@ -26,8 +26,8 @@ loomscan doctor
 | Tier | Command | What You Get |
 |------|---------|-------------|
 | **1. Basic** | `pip install loomscan` | All 2,473 rules, Rich CLI display, 75+ engines, HTML/SARIF/JSON reports |
-| **2. Full** | `pip install loomscan[full]` | + tree-sitter (CPG/def-use), Rust core (10-50× faster), TUI, pillow |
-| **3. All** | `pip install loomscan[all]` | + semgrep, mutation testing, LLM verify, fuzz, premium image rendering |
+| **2. Full** | `pip install loomscan[full]` | + tree-sitter (CPG/def-use), Rust core (10-50× faster), TUI, pillow, **semgrep** (all 2,473 rules fire), **GNN-on-CPG** (real torch-geometric model with learned weights) |
+| **3. All** | `pip install loomscan[all]` | + mutation testing, LLM verify, fuzz, premium image rendering |
 
 ## What `loomscan check --full` Runs
 
@@ -67,7 +67,7 @@ When you run `loomscan check --full`, ALL of these execute:
 | **CVE Enrichment** | Maps findings to known CVEs (Log4Shell, Spring4Shell, etc.) | ✅ Context-aware |
 | **Merge Review** | Pre-merge: new vs resolved findings + blast radius + recommendation | ✅ No competitor has this |
 
-### Vulnerability Coverage: 19/20 (95%)
+### Vulnerability Coverage: 20/20 (100%)
 | # | Vulnerability | Status | Engine |
 |---|--------------|--------|--------|
 | 1 | SQL Injection | ✅ | YAML + taint + OWASP |
@@ -75,7 +75,7 @@ When you run `loomscan check --full`, ALL of these execute:
 | 3 | Hardcoded Secret | ✅ | Regex + entropy |
 | 4 | Missing Auth | ✅ | Auth detector + BL |
 | 5 | Race Condition (TOCTOU) | ✅ | TOCTOU detector (AST) |
-| 6 | Integer Overflow | ❌ | Needs type inference (v7.2) |
+| 6 | Integer Overflow | ✅ | Integer overflow detector (v7.2) |
 | 7 | Business Logic (neg qty) | ✅ | Domain-aware BL miner |
 | 8 | Missing Transaction | ✅ | Typestate protocol |
 | 9 | Log Injection | ✅ | Code quality + CPG |

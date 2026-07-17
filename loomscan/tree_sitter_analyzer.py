@@ -37,7 +37,7 @@ def _parse_file(file_path, lang):
         source = file_path.read_text(encoding="utf-8", errors="replace")
         tree = parser.parse(source.encode("utf-8"))
         return tree, source
-    except: return None
+    except Exception: return None
 
 def _node_text(node, source):
     return source.encode("utf-8")[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
@@ -86,7 +86,7 @@ def analyze_java_ast(file_path, repo_root=None):
 def analyze_python_ast(file_path, repo_root=None):
     import ast as pyast
     try: source = file_path.read_text(encoding="utf-8"); tree = pyast.parse(source)
-    except: return []
+    except Exception: return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     findings = []
     imported_names = {}
@@ -137,7 +137,7 @@ def analyze_repo_with_ast(repo_root, max_files=150):
         if p.suffix.lower() not in {".py",".js",".jsx",".ts",".tsx",".java",".go",".c",".cpp"}: continue
         try:
             if p.stat().st_size > 200000: continue
-        except: continue
+        except Exception: continue
         try: findings += analyze_with_ast(p, repo_root)
         except Exception: pass  # v4.5: suppressed — add logging
         count += 1

@@ -216,7 +216,7 @@ class MavenCVEDatabase:
                     self.cves.append(MavenCVE(cve_id,pkg,ar or f"<{fv}",fv or "unknown",severity,"CWE-Other",
                         vuln.get("summary","OSV.dev")[:200],"present_not_exploitable"))
                     new_count += 1
-            except: continue
+            except Exception: continue
         if new_count>0: self._save_cache()
         return new_count
     def lookup(self, package, version):
@@ -228,7 +228,7 @@ class MavenCVEDatabase:
 def scan_pom_xml_for_cves(pom_path, cve_db=None):
     if cve_db is None: cve_db = MavenCVEDatabase()
     try: content = pom_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     findings = []
     spring_boot_version = None
     m = re.search(r'<parent>\s*<groupId>org\.springframework\.boot</groupId>\s*<artifactId>spring-boot-starter-parent</artifactId>\s*<version>([^<]+)</version>', content)

@@ -1,5 +1,20 @@
 """v4_restored.py — thin aggregator for v4 modules.
 
+v7.4: DEPRECATED. This file is a thin re-export aggregator kept for backward
+compatibility. The orchestrator now imports directly from the underlying
+modules (expanded_rules, codebase_understanding, semantic_bl, etc.). This
+file will be REMOVED in v8.0.
+
+New code should import directly from:
+  - loomscan.expanded_rules
+  - loomscan.codebase_understanding
+  - loomscan.semantic_bl
+  - loomscan.multi_lang_null
+  - loomscan.multi_lang_testing
+  - loomscan.multi_lang_typestate
+  - loomscan.multi_lang_taint
+  - loomscan.multi_lang_contracts
+
 v4.27: Split from 1,581 lines into 8 real implementation modules.
 This file now contains only:
   - Shared types (UnifiedFinding)
@@ -29,10 +44,21 @@ import sys
 import textwrap
 import tempfile
 import logging
+import warnings
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Set, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
+
+# v7.4: Emit DeprecationWarning on import
+warnings.warn(
+    "loomscan.v4_restored is deprecated since v7.4 and will be removed in v8.0. "
+    "Import directly from loomscan.expanded_rules, loomscan.codebase_understanding, "
+    "loomscan.semantic_bl, loomscan.multi_lang_null, loomscan.multi_lang_typestate, "
+    "loomscan.multi_lang_taint, or loomscan.multi_lang_contracts instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 try:
     from .normalized_ast import parse_file, get_language, is_supported, NormalizedNode, _HAS_TS, _TS_LANGUAGE_MODULES

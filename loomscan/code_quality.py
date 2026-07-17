@@ -210,7 +210,7 @@ def detect_magic_numbers(source, file, lang):
         for m in number_re.finditer(line):
             num_str = m.group()
             try: num = int(num_str) if '.' not in num_str else float(num_str)
-            except: continue
+            except Exception: continue
             if num in NON_MAGIC_NUMBERS: continue
             if isinstance(num, int) and abs(num) <= 4: continue
             if line.count(',') >= 3: continue
@@ -361,7 +361,7 @@ def _detect_axios_import_inconsistency(js_files, repo_root):
     files_default = []; files_create = []; files_auth = []
     for f in js_files:
         try: source = f.read_text(encoding="utf-8", errors="replace")
-        except: continue
+        except Exception: continue
         rel = str(f.relative_to(repo_root)) if repo_root else str(f)
         if re.search(r'\baxios\.(?:get|post|put|delete|patch)\s*\(', source): files_default.append((rel, source))
         if re.search(r'\baxios\.create\s*\(', source): files_create.append((rel, source))
@@ -531,7 +531,7 @@ def analyze_code_quality(file_path, repo_root=None):
     if lang == "unknown": return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8", errors="replace")
-    except: return []
+    except Exception: return []
     findings = []
     rules = get_rules_for_language(lang)
     lines = source.splitlines()

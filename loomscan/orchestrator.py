@@ -1613,8 +1613,9 @@ class Orchestrator:
             self._scanner_error("v2_analyzers", e)
 
         # 8. v4 restored: expanded rules + codebase understanding + semantic BL + nullness + state machines + typestate
+        # v7.5.6: Import from v4_aggregator instead of deprecated v4_restored
         try:
-            from .v4_restored import analyze_all as v4_analyze
+            from .v4_aggregator import analyze_all as v4_analyze
             v4_sev = {"critical": Severity.CRITICAL, "high": Severity.HIGH, "medium": Severity.MEDIUM, "low": Severity.LOW, "info": Severity.INFO}
             for uf in v4_analyze(self.repo_root):
                 findings.append(Finding(
@@ -1701,6 +1702,120 @@ class Orchestrator:
                 findings.append(f)
         except Exception as e:
             self._scanner_error("dynamic_cve", e)
+
+        # v7.5.1: Multi-call analysis (reentrancy, missing-auth chains, TOCTOU)
+        # Only runs on Python repos — the module analyzes Python AST.
+        try:
+            from .multi_call import scan_repo_multi_call
+            from ._paths import is_loomscan_artifact
+            # Check if repo has Python files
+            has_python = any(
+                p.suffix == ".py" and not is_loomscan_artifact(p)
+                for p in self.repo_root.rglob("*.py")
+            )
+            if has_python:
+                for v in scan_repo_multi_call(self.repo_root, check="all"):
+                    findings.append(Finding(
+                        layer=LayerID.L0_FAST,
+                        rule_id=f"L0.multi_call.{v.violation_type}",
+                        message=v.description,
+                        file=v.file, start_line=v.line,
+                        severity=Severity.HIGH if "reentrancy" in v.violation_type else Severity.MEDIUM,
+                        confidence=0.7,
+                        blast_radius=BlastRadius.MODULE,
+                        exploitability=0.8 if "reentrancy" in v.violation_type else 0.5,
+                        category=Category.SECURITY,
+                        cwe="CWE-836" if "reentrancy" in v.violation_type else "CWE-362" if "toctou" in v.violation_type else "CWE-862",
+                        fix_suggestion=v.suggestion if hasattr(v, "suggestion") else "",
+                        raw={"violation_type": v.violation_type, "function": getattr(v, "function", "")},
+                    ))
+        except Exception as e:
+            self._scanner_error("multi_call", e)
+
+        # v7.5.1: JSX/React auth coverage analysis
+        # Only runs on repos with .jsx/.tsx files.
+        try:
+            from .jsx_auth import extract_all_jsx_auth, JSXAuthViolationDetector
+            has_jsx = any(
+                p.suffix.lower() in (".jsx", ".tsx") and not is_loomscan_artifact(p)
+                for p in self.repo_root.rglob("*")
+            )
+            if has_jsx:
+                auth_rules = extract_all_jsx_auth(self.repo_root)
+                detector = JSXAuthViolationDetector(rules=auth_rules)
+                for v in detector.analyze(self.repo_root):
+                    findings.append(Finding(
+                        layer=LayerID.L0_FAST,
+                        rule_id=f"L0.jsx_auth.{v.rule_id}",
+                        message=v.description,
+                        file=v.file, start_line=v.line,
+                        severity=Severity.HIGH if v.severity == "high" else Severity.MEDIUM,
+                        confidence=0.65,
+                        blast_radius=BlastRadius.MODULE,
+                        exploitability=0.7,
+                        category=Category.SECURITY,
+                        cwe="CWE-862",
+                        fix_suggestion="Add an auth wrapper (withAuth HOC, useAuth hook, or <ProtectedRoute>) to this page.",
+                        raw={"rule_id": v.rule_id},
+                    ))
+        except Exception as e:
+            self._scanner_error("jsx_auth", e)
+
+        # v7.5.1: Stateful PBT (property-based testing for stateful classes)
+        # Only runs on Python repos. Discovers classes with mutator methods and
+        # generates random action sequences to find invariant violations.
+        # Note: this is SLOW (runs actual tests), so it's opt-in via
+        # `loomscan stateful-pbt` CLI command, not in the default --full scan.
+        # The orchestrator just discovers targets and reports them as info-level
+        # findings so users know stateful PBT is available.
+        try:
+            from .stateful_pbt import discover_stateful_targets
+            has_python = any(
+                p.suffix == ".py" and not is_loomscan_artifact(p)
+                for p in self.repo_root.rglob("*.py")
+            )
+            if has_python:
+                pbt_targets_found = 0
+                for py_file in self.repo_root.rglob("*.py"):
+                    if is_loomscan_artifact(py_file):
+                        continue
+                    try:
+                        targets = discover_stateful_targets(py_file)
+                        for class_name, _, mutators, invariants in targets:
+                            pbt_targets_found += 1
+                            if pbt_targets_found <= 10:  # limit info findings
+                                findings.append(Finding(
+                                    layer=LayerID.L0_FAST,
+                                    rule_id="L0.stateful_pbt.target_discovered",
+                                    message=f"Stateful PBT target discovered: {class_name} (mutators: {len(mutators)}, invariants: {len(invariants)}). Run `loomscan stateful-pbt --target {class_name}` to test.",
+                                    file=str(py_file.relative_to(self.repo_root)),
+                                    start_line=1,
+                                    severity=Severity.LOW,  # v7.5.1: LOW (not INFO) so it shows at strictness 7+
+                                    confidence=1.0,
+                                    blast_radius=BlastRadius.FUNCTION,
+                                    exploitability=0.0,
+                                    category=Category.CORRECTNESS,
+                                    cwe="CWE-840",
+                                    fix_suggestion=f"Run `loomscan stateful-pbt --repo {self.repo_root} --target {class_name}` to verify invariants.",
+                                    raw={"class": class_name, "mutators": mutators, "invariants": invariants},
+                                ))
+                    except Exception:
+                        continue
+                if pbt_targets_found > 10:
+                    findings.append(Finding(
+                        layer=LayerID.L0_FAST,
+                        rule_id="L0.stateful_pbt.more_targets",
+                        message=f"{pbt_targets_found} stateful PBT targets discovered (showing first 10). Run `loomscan stateful-pbt --repo {self.repo_root}` to test all.",
+                        file="", start_line=0,
+                        severity=Severity.INFO,
+                        confidence=1.0,
+                        blast_radius=BlastRadius.SYSTEM,
+                        exploitability=0.0,
+                        category=Category.CORRECTNESS,
+                        cwe="CWE-840",
+                    ))
+        except Exception as e:
+            self._scanner_error("stateful_pbt", e)
 
         return findings
 
@@ -1909,8 +2024,10 @@ class Orchestrator:
                         raw={"object": v.object_name, "protocol": v.protocol, "violation": v.violation},
                     ))
             # v4.30: Run multi-lang typestate via NormalizedNode
+            # v7.4: v4_restored is deprecated; suppress warning during transition
             try:
-                from .v4_restored import detect_typestate_multi
+                # v7.5.6: Import directly from multi_lang_typestate instead of deprecated v4_restored
+                from .multi_lang_typestate import detect_typestate_multi
                 from .normalized_ast import parse_file, get_language
                 lang = get_language(file_path)
                 if lang != "unknown":

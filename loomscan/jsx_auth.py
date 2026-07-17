@@ -159,6 +159,13 @@ class JSXAuthViolationDetector:
 
     def analyze(self, repo_root: Path) -> List[AuthViolation]:
         out: List[AuthViolation] = []
+        # v7.5.1: Use unified skip_dirs
+        try:
+            from ._paths import is_loomscan_artifact
+            skip_check = is_loomscan_artifact
+        except ImportError:
+            _skip = {"node_modules", ".next", ".git", "dist", "build", ".loomscan-cache"}
+            skip_check = lambda p: any(s in str(p) for s in _skip)
         # Group rules by file
         by_file: Dict[str, List[JSXAuthRule]] = {}
         for r in self.rules:
@@ -169,7 +176,7 @@ class JSXAuthViolationDetector:
         for path in repo_root.rglob("*"):
             if not path.is_file() or path.suffix.lower() not in {".jsx", ".tsx", ".js", ".ts"}:
                 continue
-            if any(s in str(path) for s in ("node_modules", ".next", "dist", "build")):
+            if skip_check(path):
                 continue
             if any(page_dir in path.parts for page_dir in _PAGE_DIRS):
                 page_files.append(path)
@@ -207,13 +214,19 @@ def extract_all_jsx_auth(repo_root: Path) -> List[JSXAuthRule]:
     """Walk a repo and extract all JSX auth rules."""
     out: List[JSXAuthRule] = []
     extractor = JSXAuthExtractor()
-    skip = {"node_modules", ".next", ".git", "dist", "build"}
+    # v7.5.1: Use unified skip_dirs from _paths.py to prevent feedback-loop
+    try:
+        from ._paths import is_loomscan_artifact
+        skip_check = is_loomscan_artifact
+    except ImportError:
+        skip = {"node_modules", ".next", ".git", "dist", "build", ".loomscan-cache"}
+        skip_check = lambda p: any(s in str(p) for s in skip)
     for path in repo_root.rglob("*"):
         if not path.is_file():
             continue
         if path.suffix.lower() not in {".jsx", ".tsx", ".js", ".ts"}:
             continue
-        if any(s in str(path) for s in skip):
+        if skip_check(path):
             continue
         out.extend(extractor.extract_from_file(path))
     return out

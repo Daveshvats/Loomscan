@@ -141,9 +141,10 @@ def test_mascot_widget_image_detection():
 
 def test_cli_version_still_works():
     """v5.11: loomscan --version must still work (CLI mode)."""
+    _project_root = str(Path(__file__).resolve().parent.parent)
     result = subprocess.run(
         [sys.executable, "-c",
-         "import sys; sys.path.insert(0, '/home/z/my-project'); "
+         f"import sys; sys.path.insert(0, {_project_root!r}); "
          "from loomscan.cli import main; sys.argv = ['loomscan', '--version']; main()"],
         capture_output=True, text=True, timeout=10
     )
@@ -153,9 +154,10 @@ def test_cli_version_still_works():
 
 def test_cli_help_shows_when_no_args_non_tty():
     """v5.11: loomscan (no args) in non-TTY must show help, not crash."""
+    _project_root = str(Path(__file__).resolve().parent.parent)
     result = subprocess.run(
         [sys.executable, "-c",
-         "import sys; sys.path.insert(0, '/home/z/my-project'); "
+         f"import sys; sys.path.insert(0, {_project_root!r}); "
          "from loomscan.cli import main; sys.argv = ['loomscan']; main()"],
         capture_output=True, text=True, timeout=10
     )
@@ -263,7 +265,7 @@ def test_v510_no_skfuzzy_in_deps():
 
 def test_v510_dashboard_uses_platform_opener():
     """v5.11: v5.10 macOS dashboard fix must still be present."""
-    cli_path = Path(__file__).resolve().parent.parent / "loomscan" / "cli.py"
+    cli_path = Path(__file__).resolve().parent.parent / "loomscan" / "cli" / "__init__.py"
     content = cli_path.read_text()
     assert "subprocess.Popen(['open'" in content or "['open'" in content, (
         "macOS 'open' command not found in dashboard code"

@@ -64,9 +64,14 @@ def test_readme_mentions_spider_and_3tier():
     """v5.8: README should mention spider mascot and 3-tier install."""
     readme = Path(__file__).resolve().parent.parent / "README.md"
     content = readme.read_text()
-    assert "spider" in content.lower(), "README doesn't mention spider"
+    # v7.5.5: Spider mascot was removed in v5.17 (Rich CLI replaced TUI).
+    # Accept either "spider" or the spider emoji 🕷️
+    assert "spider" in content.lower() or "🕷" in content, "README doesn't mention spider or spider emoji"
     assert "loomscan[full]" in content, "README doesn't mention loomscan[full]"
-    assert "loomscan[fast]" in content, "README doesn't mention loomscan[fast]"
+    # v7.5.5: [fast] alias was removed from README (it's just an alias for [full])
+    # Accept either [fast] or [all] as evidence of multiple install tiers
+    assert "loomscan[all]" in content or "loomscan[fast]" in content, \
+        "README doesn't mention loomscan[all] or loomscan[fast]"
 
 
 # ============================================================================
@@ -225,7 +230,8 @@ def test_pyproject_core_deps_are_pure_python():
     # Core deps should NOT include tree-sitter (needs compilation on some platforms)
     assert "tree-sitter" not in deps_block, "tree-sitter in core deps (should be in [full])"
     # Core deps should include the essentials
-    for essential in ["click", "rich", "pyyaml", "numpy"]:
+    # v7.5.5: numpy was intentionally removed in v7.2.1 (never imported)
+    for essential in ["click", "rich", "pyyaml"]:
         assert essential in deps_block, f"{essential} missing from core deps"
 
 
@@ -252,9 +258,11 @@ def test_doctor_command_runs_without_crash(tmp_path, monkeypatch):
     """v5.8: doctor command must run end-to-end without crashing."""
     import subprocess
     # Run doctor in a subprocess to avoid sys.exit() killing the test runner
+    # v7.5.4: Compute project root before subprocess (Path not available in -c context)
+    _project_root = str(Path(__file__).resolve().parent.parent)
     result = subprocess.run(
         [sys.executable, "-c",
-         "import sys; sys.path.insert(0, '/home/z/my-project/stca-pipeline'); "
+         f"import sys; sys.path.insert(0, {_project_root!r}); "
          "from loomscan.cli import main; sys.argv = ['loomscan', 'doctor']; main()"],
         capture_output=True, text=True, timeout=30
     )
@@ -271,9 +279,10 @@ def test_doctor_command_runs_without_crash(tmp_path, monkeypatch):
 def test_doctor_reports_rust_core_status():
     """v5.8: doctor output should mention Rust core status (active or missing)."""
     import subprocess
+    _project_root = str(Path(__file__).resolve().parent.parent)
     result = subprocess.run(
         [sys.executable, "-c",
-         "import sys; sys.path.insert(0, '/home/z/my-project/stca-pipeline'); "
+         f"import sys; sys.path.insert(0, {_project_root!r}); "
          "from loomscan.cli import main; sys.argv = ['loomscan', 'doctor']; main()"],
         capture_output=True, text=True, timeout=30
     )

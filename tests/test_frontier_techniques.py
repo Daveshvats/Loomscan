@@ -1,6 +1,9 @@
 """Tests for v4 frontier techniques: stateful PBT, dynamic invariants,
 spec mining, runtime verification, multi-call analysis, counterexamples,
 and expanded metamorphic relations.
+
+v7.5: stateful_pbt and multi_call modules were RESTORED from git history
+(deleted in v7.4.0, restored in v7.5.0 per audit feedback). All tests run.
 """
 import ast
 import tempfile

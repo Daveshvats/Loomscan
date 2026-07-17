@@ -8,27 +8,27 @@ from typing import Optional
 
 import click
 
-from . import __version__
-from .config import STCAConfig, find_config
-from .orchestrator import Orchestrator
-from .bootstrap.invariant_inference import InvariantInferrer
-from .bootstrap.harness_gen import HarnessGenerator
-from .bootstrap.property_gen import PropertyTestGenerator
-from .feedback.stats import StatsTracker
-from .feedback.rule_capture import RuleCapture
-from .llm.client import LLMClient
-from .report.tui import render_tui
+from .. import __version__
+from ..config import STCAConfig, find_config
+from ..orchestrator import Orchestrator
+from ..bootstrap.invariant_inference import InvariantInferrer
+from ..bootstrap.harness_gen import HarnessGenerator
+from ..bootstrap.property_gen import PropertyTestGenerator
+from ..feedback.stats import StatsTracker
+from ..feedback.rule_capture import RuleCapture
+from ..llm.client import LLMClient
+from ..report.tui import render_tui
 from rich.console import Console
 from rich.align import Align
-from . import installer
-from .rules import (list_builtin_packs, list_external_packs,
+from .. import installer
+from ..rules import (list_builtin_packs, list_external_packs,
                     get_builtin_pack_path, pull_external_pack)
-from .cache import ResultCache
-from .baseline import Baseline
+from ..cache import ResultCache
+from ..baseline import Baseline
 
 # Register v2 commands
 try:
-    from .cli_v2 import register_v2_commands
+    from ..cli_v2 import register_v2_commands
     _HAS_V2 = True
 except ImportError:
     _HAS_V2 = False
@@ -69,7 +69,7 @@ def main(ctx):
         import sys as _sys
         # Show the LOOMSCAN logo + help
         try:
-            from .cli_display import _get_logo_text
+            from ..cli_display import _get_logo_text
             console = Console()
             console.print(Align.center(_get_logo_text(__version__)))
             console.print()
@@ -138,7 +138,7 @@ def quickstart(repo: str, open_dashboard: bool):
     # Step 2: Run scan (v5.7: with progress + mascot)
     click.echo(f"\nRunning full LoomScan scan on {repo_root}...")
     config = STCAConfig.from_file(find_config(repo_root))
-    from .tui import ScanProgress
+    from ..tui import ScanProgress
     progress = ScanProgress(total_stages=7, show_mascot=True)
     try:
         progress.__enter__()
@@ -148,7 +148,7 @@ def quickstart(repo: str, open_dashboard: bool):
         progress.__exit__(None, None, None)
 
     # Step 3: Show summary
-    from .models import Severity
+    from ..models import Severity
     sev_counts = {Severity.CRITICAL: 0, Severity.HIGH: 0,
                   Severity.MEDIUM: 0, Severity.LOW: 0, Severity.INFO: 0}
     for f in result.findings:
@@ -183,7 +183,7 @@ def quickstart(repo: str, open_dashboard: bool):
     if open_dashboard:
         click.echo(f"\nGenerating dashboard...")
         try:
-            from .report.dashboard import generate_dashboard
+            from ..report.dashboard import generate_dashboard
             import subprocess
             import platform as _platform
             dash_path = repo_root / "loomscan-dashboard.html"
@@ -305,7 +305,7 @@ def doctor_cmd(repo: str):
     # --- v5.9: TUI mascot renderer ---
     click.echo("TUI mascot (Loomy the spider):")
     try:
-        from .tui.image_render import detect_terminal_protocol
+        from ..tui.image_render import detect_terminal_protocol
         protocol = detect_terminal_protocol()
         if protocol == "ascii":
             click.echo(f"  [ASCII] Terminal doesn't support inline images — using ASCII spider")
@@ -313,7 +313,7 @@ def doctor_cmd(repo: str):
         else:
             click.echo(f"  [IMAGE] Terminal protocol: {protocol} — Loomy renders as real pixel art!")
             # Check that frames are available
-            from .tui.image_render import _load_png_frames
+            from ..tui.image_render import _load_png_frames
             frames = _load_png_frames()
             click.echo(f"  [OK]    {len(frames)} animation frames loaded")
     except Exception as e:
@@ -323,12 +323,12 @@ def doctor_cmd(repo: str):
     # --- yaml_engine Rust detection ---
     click.echo("YAML engine:")
     try:
-        from .yaml_engine import is_rust_core_active, count_applicable_rules
-        from .rules import get_builtin_pack_path
+        from ..yaml_engine import is_rust_core_active, count_applicable_rules
+        from ..rules import get_builtin_pack_path
         rust_active = is_rust_core_active()
         click.echo(f"  Rust core active: {rust_active}")
         # Count rules
-        from .rules import BUILTIN_PACKS
+        from ..rules import BUILTIN_PACKS
         total_rules = 0
         pack_count = 0
         for pack_name in BUILTIN_PACKS:
@@ -682,7 +682,7 @@ def monorepo_cmd(repo: str, add: Optional[str], remove: Optional[str], list_: bo
             return
         resolved = config.resolve_workspaces(repo_root)
         click.echo(f"Scanning {len(resolved)} workspace(s)...")
-        from .orchestrator import Orchestrator
+        from ..orchestrator import Orchestrator
         for ws in resolved:
             rel = ws.relative_to(repo_root) if ws != repo_root else "<root>"
             click.echo(f"\n=== Workspace: {rel} ===")
@@ -691,7 +691,7 @@ def monorepo_cmd(repo: str, add: Optional[str], remove: Optional[str], list_: bo
             result = orch.run_full()
             click.echo(f"  Findings: {len(result.findings)}")
             # Show top 3 by severity
-            from .models import Severity
+            from ..models import Severity
             by_sev = {Severity.CRITICAL: 0, Severity.HIGH: 0,
                       Severity.MEDIUM: 0, Severity.LOW: 0}
             for f in result.findings:
@@ -937,7 +937,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
     loomscanignore_path = repo_root / ".loomscanignore"
     if not loomscanignore_path.exists() and not quiet:
         try:
-            from .loomscanignore import generate_loomscanignore
+            from ..loomscanignore import generate_loomscanignore
             generated = generate_loomscanignore(repo_root)
             click.echo(f"📝 Auto-generated {generated} (language-aware excludes)", err=True)
             # Reload to pick up the new patterns
@@ -976,7 +976,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
     display_enabled = not (quiet or as_json or sarif or summary) and sys.stdout.isatty()
 
     if display_enabled:
-        from .cli_display import CLIDisplay
+        from ..cli_display import CLIDisplay
         cmd_str = f"loomscan check {'--full' if full else ''}"
         if strictness:
             cmd_str += f" --strictness {strictness}"
@@ -998,7 +998,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
 
     try:
         # Use ScanProgress internally (no TUI, just for stage tracking)
-        from .tui import ScanProgress
+        from ..tui import ScanProgress
         progress = ScanProgress(total_stages=7 if full else 5, enabled=False)
 
         orch = Orchestrator(repo_root, config, strictness=strictness,
@@ -1070,7 +1070,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
         if display:
             display._scan_complete = True
             # Get exact severity counts
-            from .models import Severity
+            from ..models import Severity
             sev_counts = {Severity.CRITICAL: 0, Severity.HIGH: 0,
                          Severity.MEDIUM: 0, Severity.LOW: 0, Severity.INFO: 0}
             for f in result.findings:
@@ -1086,8 +1086,8 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
             display.update_files(total_files, total_files)
 
             # Generate reports
-            from .report.sarif import save_sarif
-            from .report.html import save_html
+            from ..report.sarif import save_sarif
+            from ..report.html import save_html
             report_dir = repo_root / ".loomscan-reports"
             report_dir.mkdir(parents=True, exist_ok=True)
             html_path = report_dir / "report.html"
@@ -1134,7 +1134,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
                 pass
 
             # Exit with appropriate code
-            from .models import Decision
+            from ..models import Decision
             if strict_scanners and result.has_scanner_errors:
                 sys.exit(3)
             sys.exit({
@@ -1163,7 +1163,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
     # v4.32 had 3 bugs here (ImportError on generate_sarif, wrong default path,
     # missing --output flag). All fixed.
     if sarif:
-        from .report.sarif import to_sarif, save_sarif
+        from ..report.sarif import to_sarif, save_sarif
         # Decide output target
         if output_path == "-":
             # stdout only, no file
@@ -1206,7 +1206,7 @@ def check(repo: str, base: str, staged: bool, as_json: bool, quiet: bool,
         render_tui(result)
 
     # exit code: 0 = pass, 1 = block, 3 = scanner failure (with --strict-scanners)
-    from .models import Decision
+    from ..models import Decision
     if strict_scanners and result.has_scanner_errors:
         sys.exit(3)
     sys.exit({
@@ -1266,7 +1266,7 @@ def gate(repo: str, full: bool, base: str, staged: bool, preset: Optional[str],
       loomscan gate --strict-scanners                       # also fail on scanner errors
     """
     import logging as _logging
-    from .models import Severity
+    from ..models import Severity
     if verbose:
         _logging.getLogger("loomscan").setLevel(_logging.DEBUG)
 
@@ -1286,7 +1286,7 @@ def gate(repo: str, full: bool, base: str, staged: bool, preset: Optional[str],
 
     config = STCAConfig.from_file(find_config(repo_root))
     # v5.7: progress + mascot (disabled for --json)
-    from .tui import ScanProgress
+    from ..tui import ScanProgress
     tui_enabled = not as_json
     progress = ScanProgress(total_stages=7 if full else 5,
                             show_mascot=tui_enabled, enabled=tui_enabled)
@@ -1402,7 +1402,7 @@ def fix(repo: str, apply: bool, finding_id: str):
         click.echo(f"  {p.name}")
 
     if apply:
-        from .layers.l8_autofix import L8AutoFix
+        from ..layers.l8_autofix import L8AutoFix
         for patch_path in patches:
             # The patch file contains the new file content
             new_content = patch_path.read_text(encoding="utf-8")
@@ -1425,7 +1425,7 @@ def behavioral():
 @click.option("--days", default=90, help="Churn window in days")
 def behavioral_hotspots(repo: str, days: int):
     """Show top hotspot files (high churn × high complexity)."""
-    from .layers.l0d_behavioral import L0dBehavioral
+    from ..layers.l0d_behavioral import L0dBehavioral
     repo_root = Path(repo).resolve()
     layer = L0dBehavioral()
     layer.CHURN_WINDOW_DAYS = days
@@ -1448,7 +1448,7 @@ def behavioral_hotspots(repo: str, days: int):
 @click.option("--file", "file_path", help="Analyze a specific file")
 def taint_cmd(repo: str, file_path: str):
     """Run interprocedural taint tracking on Python files."""
-    from .taint_tracker import track_taint_python
+    from ..taint_tracker import track_taint_python
     repo_root = Path(repo).resolve()
     if file_path:
         files = [Path(file_path)]
@@ -1472,7 +1472,7 @@ def taint_cmd(repo: str, file_path: str):
 @click.option("--min-tokens", default=40, help="Minimum duplicated tokens")
 def duplicates_cmd(repo: str, min_tokens: int):
     """Find duplicated code blocks across the repo."""
-    from .duplication import find_duplicates, MIN_TOKENS
+    from ..duplication import find_duplicates, MIN_TOKENS
     repo_root = Path(repo).resolve()
     dups = find_duplicates(repo_root, min_tokens=min_tokens)
     if not dups:
@@ -1499,8 +1499,8 @@ def tuning_apply(repo: str):
     tuning adjustments into .loomscan.yaml under the `tuning:` section.
     The aggregator reads these at startup and adjusts membership functions.
     """
-    from .brain.tuner import compute_adjustments, apply_adjustments_to_config
-    from .feedback.stats import StatsTracker
+    from ..brain.tuner import compute_adjustments, apply_adjustments_to_config
+    from ..feedback.stats import StatsTracker
     repo_root = Path(repo).resolve()
     tracker = StatsTracker(repo_root / ".loomscan-stats.json")
     stats = tracker.summary()
@@ -1523,7 +1523,7 @@ def tuning_apply(repo: str):
 @click.option("--file", "file_path", help="Analyze a specific file")
 def typestate_cmd(repo: str, file_path: str):
     """Run typestate analysis (state machine violation detection)."""
-    from .typestate import analyze_typestate
+    from ..typestate import analyze_typestate
     repo_root = Path(repo).resolve()
     if file_path:
         files = [Path(file_path)]
@@ -1547,7 +1547,7 @@ def typestate_cmd(repo: str, file_path: str):
 @click.option("--file", "file_path", help="Analyze a specific file")
 def metamorphic_cmd(repo: str, file_path: str):
     """Run metamorphic tests (oracle-free bug detection)."""
-    from .metamorphic import run_metamorphic_tests
+    from ..metamorphic import run_metamorphic_tests
     repo_root = Path(repo).resolve()
     if file_path:
         # v4.43: Resolve relative paths against repo_root (was crashing)
@@ -1577,7 +1577,7 @@ def metamorphic_cmd(repo: str, file_path: str):
 @click.option("--file", "file_path", help="Analyze a specific file")
 def differential_cmd(repo: str, file_path: str):
     """Run differential tests (refactor verification)."""
-    from .differential import run_differential_tests, find_function_pairs
+    from ..differential import run_differential_tests, find_function_pairs
     repo_root = Path(repo).resolve()
     if file_path:
         # v4.43: Resolve relative paths against repo_root (was crashing)
@@ -1612,8 +1612,8 @@ def differential_cmd(repo: str, file_path: str):
               default="stats", help="Which CPG query to run")
 def cpg_cmd(repo: str, query: str):
     """Run Code Property Graph queries (Joern-style)."""
-    from .cpg import build_cpg_for_repo, cpg_stats
-    from .cpg_queries import (query_unsanitized_taint_flows, query_unused_variables,
+    from ..cpg import build_cpg_for_repo, cpg_stats
+    from ..cpg_queries import (query_unsanitized_taint_flows, query_unused_variables,
                                query_dangerous_patterns_in_auth, query_function_complexity)
     repo_root = Path(repo).resolve()
     click.echo(f"Building CPG for {repo_root}...")
@@ -1657,8 +1657,8 @@ def llm_verify_cmd(repo: str, file_path: str, func_name: str):
     The LLM proposes hypotheses; LoomScan verifies them by execution.
     Only confirmed bugs (verified by actual crash) are reported.
     """
-    from .llm_verify import llm_verify_function
-    from .llm.client import LLMClient
+    from ..llm_verify import llm_verify_function
+    from ..llm.client import LLMClient
     repo_root = Path(repo).resolve()
     config = STCAConfig.from_file(find_config(repo_root))
     if not config.llm.get("enabled"):
@@ -1718,7 +1718,7 @@ def hotspot():
               default="open")
 def hotspot_list(repo: str, status: str):
     """List security hotspots by status."""
-    from .hotspots import HotspotManager
+    from ..hotspots import HotspotManager
     repo_root = Path(repo).resolve()
     hm = HotspotManager(repo_root)
     if status == "all":
@@ -1743,7 +1743,7 @@ def hotspot_list(repo: str, status: str):
 @click.option("--user", default=lambda: __import__("getpass").getuser(), help="Reviewer name")
 def hotspot_review(repo: str, hotspot_id: str, decision: str, note: str, user: str):
     """Review a security hotspot."""
-    from .hotspots import HotspotManager
+    from ..hotspots import HotspotManager
     repo_root = Path(repo).resolve()
     hm = HotspotManager(repo_root)
     if hm.review(hotspot_id, decision, user, note):
@@ -1756,7 +1756,7 @@ def hotspot_review(repo: str, hotspot_id: str, decision: str, note: str, user: s
 @click.option("--repo", default=".")
 def hotspot_stats(repo: str):
     """Show hotspot statistics."""
-    from .hotspots import HotspotManager
+    from ..hotspots import HotspotManager
     repo_root = Path(repo).resolve()
     hm = HotspotManager(repo_root)
     stats = hm.stats()
@@ -1776,7 +1776,7 @@ def hotspot_stats(repo: str):
 @click.option("--repo", default=".")
 def hotspot_verify_audit(repo: str):
     """Verify the hotspot audit log hasn't been tampered with."""
-    from .hotspots import HotspotManager
+    from ..hotspots import HotspotManager
     repo_root = Path(repo).resolve()
     hm = HotspotManager(repo_root)
     valid, msg = hm.verify_audit_chain()
@@ -1793,7 +1793,7 @@ def audit():
 @click.option("--repo", default=".")
 def audit_stats(repo: str):
     """Show audit log statistics."""
-    from .audit import AuditLogger
+    from ..audit import AuditLogger
     repo_root = Path(repo).resolve()
     al = AuditLogger(repo_root)
     stats = al.stats()
@@ -1814,7 +1814,7 @@ def audit_stats(repo: str):
 @click.option("--n", default=20, help="Number of entries to show")
 def audit_tail(repo: str, n: int):
     """Show the last N audit log entries."""
-    from .audit import AuditLogger
+    from ..audit import AuditLogger
     repo_root = Path(repo).resolve()
     al = AuditLogger(repo_root)
     entries = al.tail(n)
@@ -1827,7 +1827,7 @@ def audit_tail(repo: str, n: int):
 @click.option("--repo", default=".")
 def audit_verify(repo: str):
     """Verify the audit log hasn't been tampered with."""
-    from .audit import AuditLogger
+    from ..audit import AuditLogger
     repo_root = Path(repo).resolve()
     al = AuditLogger(repo_root)
     valid, msg = al.verify_chain()
@@ -1844,7 +1844,7 @@ def coverage():
 @click.option("--repo", default=".")
 def coverage_summary_cmd(repo: str):
     """Show coverage summary."""
-    from .coverage import coverage_summary
+    from ..coverage import coverage_summary
     repo_root = Path(repo).resolve()
     summary = coverage_summary(repo_root)
     if not summary.get("available"):
@@ -1861,7 +1861,7 @@ def coverage_summary_cmd(repo: str):
 @click.argument("file_path")
 def coverage_file(repo: str, file_path: str):
     """Show coverage for a specific file."""
-    from .coverage import find_coverage_report
+    from ..coverage import find_coverage_report
     repo_root = Path(repo).resolve()
     report = find_coverage_report(repo_root)
     if not report:
@@ -1887,8 +1887,8 @@ def history_scan_cmd(repo: str, max_commits: int):
     Scans EVERY commit in git history, not just the current diff.
     Catches secrets leaked years ago that are still in history.
     """
-    from .advanced_secrets import scan_git_history
-    from .audit import AuditLogger
+    from ..advanced_secrets import scan_git_history
+    from ..audit import AuditLogger
     repo_root = Path(repo).resolve()
     click.echo(f"Scanning {max_commits} commits in git history for leaked secrets...")
     findings = scan_git_history(repo_root, max_commits=max_commits)
@@ -1911,7 +1911,7 @@ def history_scan_cmd(repo: str, max_commits: int):
 @click.option("--file", "file_path", help="Run Pysa on a specific file")
 def pysa_cmd(repo: str, file_path: str):
     """Run Pysa (Meta OSS) taint analysis on Python files."""
-    from .pysa_integration import PysaIntegration
+    from ..pysa_integration import PysaIntegration
     repo_root = Path(repo).resolve()
     pysa = PysaIntegration(repo_root)
     if not pysa.is_available():
@@ -1947,7 +1947,7 @@ def precision():
 @click.option("--verify", is_flag=True, default=True, help="Verify rules with Semgrep")
 def precision_mine_history(repo: str, max_commits: int, verify: bool):
     """Mine rules from git bug-fix history (learn from your past bugs)."""
-    from .rule_miner import mine_rules_from_history, save_mined_rules
+    from ..rule_miner import mine_rules_from_history, save_mined_rules
     repo_root = Path(repo).resolve()
     click.echo(f"Mining rules from last {max_commits} commits...")
     rules = mine_rules_from_history(repo_root, max_commits=max_commits, verify=verify)
@@ -1969,7 +1969,7 @@ def precision_mine_history(repo: str, max_commits: int, verify: bool):
 @click.option("--max-files", default=50)
 def precision_mine_codebase(repo: str, max_files: int):
     """Mine rules from your codebase (asserts, guards, docstrings)."""
-    from .codebase_miner import mine_repo_rules, save_mined_codebase_rules
+    from ..codebase_miner import mine_repo_rules, save_mined_codebase_rules
     repo_root = Path(repo).resolve()
     click.echo(f"Mining rules from codebase (up to {max_files} files)...")
     rules = mine_repo_rules(repo_root, max_files=max_files)
@@ -1992,8 +1992,8 @@ def precision_mine_codebase(repo: str, max_files: int):
 @click.option("--file", "file_path", required=True, help="Python file to compile rules for")
 def precision_compile_rules(repo: str, file_path: str):
     """Use LLM to generate rules, verify with mutation testing (one-shot)."""
-    from .rule_compiler import compile_rules_for_file, save_generated_rules
-    from .llm.client import LLMClient
+    from ..rule_compiler import compile_rules_for_file, save_generated_rules
+    from ..llm.client import LLMClient
     repo_root = Path(repo).resolve()
     config = STCAConfig.from_file(find_config(repo_root))
     if not config.llm.get("enabled"):
@@ -2025,7 +2025,7 @@ def precision_compile_rules(repo: str, file_path: str):
 @click.option("--repo", default=".")
 def precision_fp_stats(repo: str):
     """Show false-positive learning stats."""
-    from .precision import FPLearner
+    from ..precision import FPLearner
     repo_root = Path(repo).resolve()
     fp = FPLearner(repo_root)
     stats = fp.stats()
@@ -2039,7 +2039,7 @@ def precision_fp_stats(repo: str):
 @click.option("--repo", default=".")
 def precision_calibration(repo: str):
     """Show confidence calibration stats."""
-    from .precision import ConfidenceCalibrator
+    from ..precision import ConfidenceCalibrator
     repo_root = Path(repo).resolve()
     cal = ConfidenceCalibrator(repo_root)
     stats = cal.stats()
@@ -2055,7 +2055,7 @@ def precision_calibration(repo: str):
 @click.option("--repo", default=".")
 def precision_corroborate(repo: str):
     """Show cross-layer corroboration from the last check."""
-    from .precision import find_corroborating_findings
+    from ..precision import find_corroborating_findings
     repo_root = Path(repo).resolve()
     # load last result
     result_path = repo_root / ".loomscan-reports" / "result.json"
@@ -2145,7 +2145,7 @@ def issue():
 @click.option("--limit", default=50)
 def issue_list(repo: str, state: str, limit: int):
     """List issues by state."""
-    from .issue_store import IssueStore
+    from ..issue_store import IssueStore
     repo_root = Path(repo).resolve()
     store = IssueStore(repo_root)
     issues = store.list_issues(state=state, limit=limit)
@@ -2168,7 +2168,7 @@ def issue_list(repo: str, state: str, limit: int):
 @click.option("--user", default=lambda: __import__("getpass").getuser())
 def issue_resolve(repo: str, fingerprint: str, resolution: str, note: str, user: str):
     """Resolve an issue (mark as fixed, wontfix, or false_positive)."""
-    from .issue_store import IssueStore
+    from ..issue_store import IssueStore
     repo_root = Path(repo).resolve()
     store = IssueStore(repo_root)
     if store.mark_resolved(fingerprint, resolution, user, note):
@@ -2181,7 +2181,7 @@ def issue_resolve(repo: str, fingerprint: str, resolution: str, note: str, user:
 @click.option("--repo", default=".")
 def issue_stats(repo: str):
     """Show issue store statistics."""
-    from .issue_store import IssueStore
+    from ..issue_store import IssueStore
     repo_root = Path(repo).resolve()
     store = IssueStore(repo_root)
     stats = store.stats()
@@ -2203,7 +2203,7 @@ def issue_stats(repo: str):
 @click.option("--weeks", default=12, help="Show trend for last N weeks")
 def issue_trend(repo: str, weeks: int):
     """Show issue trend over time."""
-    from .issue_store import IssueStore
+    from ..issue_store import IssueStore
     repo_root = Path(repo).resolve()
     store = IssueStore(repo_root)
     trend = store.get_trend(weeks=weeks)
@@ -2223,7 +2223,7 @@ def issue_trend(repo: str, weeks: int):
 @click.option("--level", type=int, help="Set strictness level (1-9)")
 def strictness_cmd(repo: str, level: int):
     """Show or set the strictness level (PHPStan-inspired)."""
-    from .strictness import list_levels, get_level
+    from ..strictness import list_levels, get_level
     if level is None:
         # show all levels
         levels = list_levels()
@@ -2254,7 +2254,7 @@ def strictness_cmd(repo: str, level: int):
 @click.option("--file", "file_path", help="Analyze a specific file")
 def nullness_cmd(repo: str, file_path: str):
     """Run sound nullness analysis (NilAway-inspired) for Python."""
-    from .nullness import NullnessAnalyzer
+    from ..nullness import NullnessAnalyzer
     repo_root = Path(repo).resolve()
     analyzer = NullnessAnalyzer()
     if file_path:
@@ -2281,7 +2281,7 @@ def nullness_cmd(repo: str, file_path: str):
 @click.option("--repo", default=".")
 def consistency_cmd(repo: str):
     """Check codebase consistency (credo-inspired)."""
-    from .consistency import check_all_consistencies
+    from ..consistency import check_all_consistencies
     repo_root = Path(repo).resolve()
     inconsistencies = check_all_consistencies(repo_root, max_files=100)
     if not inconsistencies:
@@ -2305,7 +2305,7 @@ def profile():
 @click.option("--repo", default=".")
 def profile_list(repo: str):
     """List all available profiles."""
-    from .profiles import ProfileManager
+    from ..profiles import ProfileManager
     repo_root = Path(repo).resolve()
     cfg_path = find_config(repo_root)
     pm = ProfileManager(cfg_path)
@@ -2323,7 +2323,7 @@ def profile_list(repo: str):
 @click.argument("name")
 def profile_show(repo: str, name: str):
     """Show details of a specific profile."""
-    from .profiles import ProfileManager
+    from ..profiles import ProfileManager
     repo_root = Path(repo).resolve()
     cfg_path = find_config(repo_root)
     pm = ProfileManager(cfg_path)
@@ -2352,7 +2352,7 @@ def profile_show(repo: str, name: str):
 @click.argument("name")
 def profile_apply(repo: str, name: str):
     """Run check with a specific profile."""
-    from .profiles import ProfileManager
+    from ..profiles import ProfileManager
     repo_root = Path(repo).resolve()
     cfg_path = find_config(repo_root)
     pm = ProfileManager(cfg_path)
@@ -2371,7 +2371,7 @@ def rules_config():
 @click.option("--repo", default=".")
 def rules_config_stats(repo: str):
     """Show per-rule configuration stats."""
-    from .rule_config import RuleConfigManager
+    from ..rule_config import RuleConfigManager
     repo_root = Path(repo).resolve()
     cfg_path = find_config(repo_root)
     rcm = RuleConfigManager(cfg_path)
@@ -2389,7 +2389,7 @@ def rules_config_stats(repo: str):
 @click.option("--note", default="", help="Why this rule is disabled")
 def rules_config_disable(repo: str, rule_id: str, note: str):
     """Disable a specific rule."""
-    from .rule_config import RuleConfigManager, RuleConfig
+    from ..rule_config import RuleConfigManager, RuleConfig
     repo_root = Path(repo).resolve()
     cfg_path = find_config(repo_root)
     rcm = RuleConfigManager(cfg_path)
@@ -2403,7 +2403,7 @@ def rules_config_disable(repo: str, rule_id: str, note: str):
 @click.argument("severity", type=click.Choice(["critical", "high", "medium", "low", "info"]))
 def rules_config_severity(repo: str, rule_id: str, severity: str):
     """Override a rule's severity."""
-    from .rule_config import RuleConfigManager, RuleConfig
+    from ..rule_config import RuleConfigManager, RuleConfig
     repo_root = Path(repo).resolve()
     cfg_path = find_config(repo_root)
     rcm = RuleConfigManager(cfg_path)
@@ -2419,7 +2419,7 @@ def missing_patches_cmd(repo: str):
     Compares your code against known CVE patch patterns to find
     unpatched code — even if the package version says it's fixed.
     """
-    from .version_vuln_checks import scan_version_vuln_checks, version_vuln_check_stats
+    from ..version_vuln_checks import scan_version_vuln_checks, version_vuln_check_stats
     repo_root = Path(repo).resolve()
     db_stats = version_vuln_check_stats()
     click.echo(f"Patch database: {db_stats['total_patches']} known patches")
@@ -2449,7 +2449,7 @@ def contracts_cmd(repo: str):
     Extracts @deal.pre/@post/@ensure/@invariant contracts from your code
     and checks for violations at call sites.
     """
-    from .contracts import extract_all_contracts, check_preconditions_at_call_sites, contract_stats
+    from ..contracts import extract_all_contracts, check_preconditions_at_call_sites, contract_stats
     repo_root = Path(repo).resolve()
     click.echo("Extracting contracts...")
     contracts = extract_all_contracts(repo_root, max_files=100)
@@ -2484,7 +2484,7 @@ def deadcode_cmd(repo: str, discover: bool):
     Discovers all functions, then (if a trace exists from instrumentation)
     reports which were never called.
     """
-    from .deadcode import DeadCodeAnalyzer
+    from ..deadcode import DeadCodeAnalyzer
     repo_root = Path(repo).resolve()
     analyzer = DeadCodeAnalyzer(repo_root)
     click.echo("Discovering functions...")
@@ -2519,7 +2519,7 @@ def flawfinder_cmd(repo: str):
     Uses a curated database of 40+ dangerous C/C++ functions with
     risk levels (1-5), CWEs, and safer alternatives.
     """
-    from .flawfinder_db import scan_repo_dangerous_functions, database_stats
+    from ..flawfinder_db import scan_repo_dangerous_functions, database_stats
     repo_root = Path(repo).resolve()
     db = database_stats()
     click.echo(f"Flawfinder database: {db['total_functions']} dangerous functions")
@@ -2551,7 +2551,7 @@ def malicious_cmd(repo: str):
     install-time downloads, SSH key reading, import-time network access,
     base64-encoded exec, system file modification, etc.
     """
-    from .malicious_patterns import scan_repo_malicious_patterns, malicious_stats
+    from ..malicious_patterns import scan_repo_malicious_patterns, malicious_stats
     repo_root = Path(repo).resolve()
     click.echo("Scanning for malicious patterns...")
     hits = scan_repo_malicious_patterns(repo_root, max_files=200)
@@ -2582,7 +2582,7 @@ def pii_cmd(repo: str):
     Aadhaar, NINO, dates of birth, and IP addresses in source code.
     Critical for GDPR, CCPA, HIPAA compliance.
     """
-    from .pii_detection import scan_repo_pii, pii_stats
+    from ..pii_detection import scan_repo_pii, pii_stats
     repo_root = Path(repo).resolve()
     click.echo("Scanning for PII...")
     detections = scan_repo_pii(repo_root, max_files=200)
@@ -2610,7 +2610,7 @@ def rca_cmd(repo: str):
     Correlates findings from the last check to identify root causes.
     "These 5 findings are all caused by this one missing validation."
     """
-    from .root_cause import find_root_causes, rca_stats
+    from ..root_cause import find_root_causes, rca_stats
     repo_root = Path(repo).resolve()
     # load last check result
     result_path = repo_root / ".loomscan-reports" / "result.json"
@@ -2623,7 +2623,7 @@ def rca_cmd(repo: str):
         click.echo("No findings in last check.")
         return
     # reconstruct findings (simplified — just use the data for correlation)
-    from .models import Finding, Severity, BlastRadius, LayerID
+    from ..models import Finding, Severity, BlastRadius, LayerID
     findings = []
     for f_dict in data["findings"]:
         try:
@@ -2665,7 +2665,7 @@ def impact_cmd(repo: str, file_path: str):
     Builds a call graph and shows what functions/tests are affected
     by changes to the specified file.
     """
-    from .impact_analysis import ImpactAnalyzer
+    from ..impact_analysis import ImpactAnalyzer
     repo_root = Path(repo).resolve()
     target = Path(file_path)
     if not target.exists():
@@ -2718,7 +2718,7 @@ def architecture_cmd(repo: str):
 
     Checks that imports respect layer boundaries (controllers → services → models → utils).
     """
-    from .architecture import ArchitectureEnforcer
+    from ..architecture import ArchitectureEnforcer
     repo_root = Path(repo).resolve()
     enforcer = ArchitectureEnforcer(repo_root)
     click.echo(f"Architecture layers: {enforcer.stats()['layer_names']}")
@@ -2742,7 +2742,7 @@ def doc_audit_cmd(repo: str):
 
     Checks for missing docstrings, stale docstrings, TODO/FIXME/HACK comments.
     """
-    from .doc_audit import audit_repo, doc_stats
+    from ..doc_audit import audit_repo, doc_stats
     repo_root = Path(repo).resolve()
     click.echo("Auditing documentation...")
     issues = audit_repo(repo_root, max_files=100)
@@ -2769,7 +2769,7 @@ def toxicity_cmd(repo: str):
     Computes Halstead complexity + toxicity score (0-100) for each function.
     Toxic functions (>50 score) are likely to contain bugs.
     """
-    from .complexity_metrics import analyze_repo_toxicity, toxicity_stats
+    from ..complexity_metrics import analyze_repo_toxicity, toxicity_stats
     repo_root = Path(repo).resolve()
     click.echo("Analyzing code toxicity...")
     reports = analyze_repo_toxicity(repo_root, max_files=100)
@@ -2803,7 +2803,7 @@ def ffi_check_cmd(repo: str):
       - Reference counting imbalance (INCREF≠DECREF in C extension)
       - Dangerous C function calls (gets, strcpy, system via FFI)
     """
-    from .ffi_analyzer import analyze_ffi_boundary
+    from ..ffi_analyzer import analyze_ffi_boundary
     repo_root = Path(repo).resolve()
     click.echo("Analyzing FFI boundary (Python↔C)...")
     ffi_calls, violations, stats = analyze_ffi_boundary(repo_root)
@@ -2846,7 +2846,7 @@ def suppressions():
 @click.option("--repo", default=".")
 def suppressions_list(repo: str):
     """List all inline suppressions in the repo."""
-    from .suppressions import find_suppressions
+    from ..suppressions import find_suppressions
     repo_root = Path(repo).resolve()
     skip_dirs = {".git", "__pycache__", ".venv", "venv", "node_modules"}
     total = 0
@@ -3017,7 +3017,7 @@ def impact(repo: str, changed: tuple):
     """
     repo_root = Path(repo).resolve()
     try:
-        from .knowledge_graph import KnowledgeGraphBuilder, DiffImpactAnalyzer
+        from ..knowledge_graph import KnowledgeGraphBuilder, DiffImpactAnalyzer
         click.echo(f"Building knowledge graph for {repo_root}...", err=True)
         builder = KnowledgeGraphBuilder(repo_root)
         graph = builder.build(max_files=300)
@@ -3068,7 +3068,7 @@ def lsp(repo: str, stdio: bool):
     }
     """
     try:
-        from .lsp.server import LSPServer
+        from ..lsp.server import LSPServer
         server = LSPServer(repo_root=Path(repo).resolve())
         server.run()
     except Exception as e:
@@ -3102,7 +3102,7 @@ def merge_review(base: str, head: str, repo: str, strictness: int, as_json: bool
       loomscan merge-review --base origin/main --head feature-branch
       loomscan merge-review --base main --json  # for CI/CD
     """
-    from .merge_review import run_merge_review, format_merge_review
+    from ..merge_review import run_merge_review, format_merge_review
 
     repo_root = Path(repo).resolve()
     if not (repo_root / ".git").exists():
@@ -3136,6 +3136,18 @@ def merge_review(base: str, head: str, repo: str, strictness: int, as_json: bool
     exit_map = {"approve": 0, "block": 1, "request_changes": 2}
     sys.exit(exit_map.get(result.recommendation, 0))
 
+
+
+# =============================================================================
+# v7.6: Import submodules to register their commands with the main group
+# =============================================================================
+from . import advanced  # noqa: F401 — learn, second-opinion, diff, gnn-score, gnn-train
+from . import security  # noqa: F401 — jsx-auth, stateful-pbt, multi-call
+
+# v7.6: Re-export command functions for backward compatibility
+# (tests and external code import these directly from loomscan.cli)
+from .advanced import learn, second_opinion, diff, gnn_score, gnn_train
+from .security import jsx_auth, stateful_pbt, multi_call
 
 if __name__ == "__main__":
     main()

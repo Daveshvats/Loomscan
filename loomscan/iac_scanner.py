@@ -114,7 +114,7 @@ def scan_terraform(file_path, repo_root=None):
     if not file_path.exists() or file_path.suffix != ".tf": return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     findings = []
     for rule_id, pattern, severity, desc, fix in TERRAFORM_RULES:
         if pattern is None: continue
@@ -126,7 +126,7 @@ def scan_dockerfile(file_path, repo_root=None):
     if not file_path.exists() or not file_path.name.lower().startswith("dockerfile"): return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     findings = []
     lines = source.splitlines()
     # v4.35: Skip Dockerfile rules that L0eIaC layer already covers with
@@ -157,7 +157,7 @@ def scan_dockerfile(file_path, repo_root=None):
 def scan_kubernetes(file_path, repo_root=None):
     if not file_path.exists() or file_path.suffix.lower() not in (".yaml",".yml"): return []
     try: source = file_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     if "apiVersion:" not in source or "kind:" not in source: return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     findings = []
@@ -197,7 +197,7 @@ def scan_kubernetes(file_path, repo_root=None):
 def scan_cloudformation(file_path, repo_root=None):
     if not file_path.exists() or file_path.suffix.lower() not in (".json",".yaml",".yml"): return []
     try: source = file_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     if "AWSTemplateFormatVersion" not in source and "Resources" not in source: return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     findings = []
@@ -212,7 +212,7 @@ def scan_helm(file_path, repo_root=None):
     if "chart" not in str(file_path).lower() and "helm" not in str(file_path).lower(): return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     findings = []
     for i, line in enumerate(source.splitlines(), 1):
         if "privileged: true" in line:
@@ -229,7 +229,7 @@ def scan_pulumi(file_path, repo_root=None):
     if "pulumi" not in file_path.name.lower() and "pulumi" not in str(file_path).lower(): return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8")
-    except: return []
+    except Exception: return []
     findings = []
     if "aws.s3.Bucket" in source and "acl:" in source and "public-read" in source:
         findings.append(IaCFinding(file=rel,line=1,rule_id="L0.iac.PULUMI-S3-PUBLIC",severity="critical",description="Pulumi S3 public-read",fix="Set acl: private"))

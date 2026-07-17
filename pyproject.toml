@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loomscan"
-version = "7.3.2"
+version = "7.6.0"
 description = "Static + Test + Constraint Analysis — an offline, deterministic-first bug detection pipeline with a type-2 fuzzy aggregation brain"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -62,8 +62,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# v5.12: [full] now includes EVERYTHING — tree-sitter + Rust core + TUI
-# This is the "install once, get everything" tier.
+# v7.5.2: [full] now includes semgrep + GNN deps per user request.
+# This is the "install once, get everything" tier — all 2,473 rules fire,
+# plus the real GNN-on-CPG model with learned weights.
 # Users who want a lighter install can use the base install or individual extras.
 full = [
     "tree-sitter>=0.21",
@@ -86,6 +87,11 @@ full = [
     "textual-image>=0.13",    # Image rendering for mascot
     "textual-fspicker>=1.0",  # File picker for TUI
     "pillow>=10.0",           # Image processing
+    # v7.5.2: Added semgrep to [full] — without it, ~914 advanced rules are silently skipped
+    "semgrep>=1.50",          # Full YAML rule support (pattern-inside, metavariables)
+    # v7.5.2: Added GNN deps to [full] — real torch-geometric GNN with learned weights
+    "torch>=2.0",             # GNN-on-CPG model
+    "torch-geometric>=2.4",   # GCNConv layers + global_mean_pool
 ]
 
 # v5.12: [fast] is now an alias for [full] (which already includes Rust core)
@@ -98,6 +104,14 @@ fuzz = ["atheris>=2.1"]             # Python fuzzing (L4)
 mutation = ["mutmut>=3.0"]          # L2 mutation testing
 semgrep = ["semgrep>=1.50"]         # Full YAML rule support (pattern-inside, metavariables)
 re2 = ["google-re2>=0.3"]           # ReDoS protection (linear-time regex, alternative to Rust core)
+
+# v7.5: GNN-on-CPG — real Graph Neural Network with learned weights
+# Install with: pip install loomscan[gnn]
+# Falls back to HeuristicRiskScorer (hand-tuned logistic regression) if not installed.
+gnn = [
+    "torch>=2.0",
+    "torch-geometric>=2.4",
+]
 
 # v5.10: Premium TUI — term-image for real inline graphics in supporting terminals
 # (Kitty, iTerm2, WezTerm, VS Code, Ghostty). Falls back to Unicode art.

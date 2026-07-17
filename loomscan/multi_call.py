@@ -33,6 +33,21 @@ from pathlib import Path
 from typing import List, Optional, Dict, Set, Tuple
 from dataclasses import dataclass
 
+# v7.5.1: Import unified skip_dirs to prevent feedback-loop (scanning LoomScan's
+# own output files in .loomscan-cache/). This was the same class of bug as the
+# v7.2 feedback-loop P0.
+try:
+    from ._paths import DEFAULT_SKIP_DIRS, is_skipped_dir
+    def _should_skip(path: Path) -> bool:
+        return is_skipped_dir(path)
+except ImportError:
+    # Fallback if _paths.py is unavailable
+    DEFAULT_SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules",
+                         "build", "dist", "target", ".loomscan-cache",
+                         ".pytest_cache", ".loomscan-reports", ".loomscan-fixes"}
+    def _should_skip(path: Path) -> bool:
+        return any(part in DEFAULT_SKIP_DIRS for part in path.parts)
+
 
 @dataclass
 class MultiCallViolation:
@@ -319,4 +334,29 @@ def analyze_multi_call(file_path: Path) -> List[MultiCallViolation]:
     violations.extend(analyze_reentrancy(file_path))
     violations.extend(analyze_missing_auth_in_chain(file_path))
     violations.extend(analyze_toctou(file_path))
+    return violations
+
+
+def scan_repo_multi_call(repo_root: Path, check: str = "all") -> List[MultiCallViolation]:
+    """v7.5.1: Scan a repo for multi-call bugs, respecting skip_dirs.
+
+    This is the canonical entry point — use instead of looping analyze_*() yourself.
+    Skips LoomScan's own output directories (.loomscan-cache, .loomscan-reports,
+    .loomscan-fixes) to prevent the feedback-loop bug.
+    """
+    violations: List[MultiCallViolation] = []
+    for py_file in repo_root.rglob("*.py"):
+        if _should_skip(py_file):
+            continue
+        try:
+            if check == "all":
+                violations.extend(analyze_multi_call(py_file))
+            elif check == "reentrancy":
+                violations.extend(analyze_reentrancy(py_file))
+            elif check == "missing-auth":
+                violations.extend(analyze_missing_auth_in_chain(py_file))
+            elif check == "toctou":
+                violations.extend(analyze_toctou(py_file))
+        except Exception:
+            continue
     return violations

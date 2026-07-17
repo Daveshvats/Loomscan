@@ -2,7 +2,7 @@
 
 Detects common concurrency bugs that AST + pattern scanning can surface:
   - Python asyncio TOCTOU:    await followed by use of a value that may change
-  - asyncio.gather without try/except: one failing task kills all
+  - asyncio.gather without try/except Exception: one failing task kills all
   - asyncio.create_task without storing the reference (task may be GC'd)
   - JS Promise without .catch() / async fn without try/catch
   - JS Promise.all without per-promise error handling

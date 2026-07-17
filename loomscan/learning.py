@@ -1,4 +1,4 @@
-"""Learning & adaptation: code embeddings, active learning, GNN-on-CPG.
+"""Learning & adaptation: code embeddings, active learning, heuristic risk scoring.
 
 Three components that turn the deterministic pipeline into one that learns
 from feedback and improves over time — without requiring a GPU or large
@@ -6,7 +6,8 @@ training corpora.
 
   - CodeEmbeddings:        character 3-gram TF vectors + cosine similarity
   - ActiveLearning:        pick which findings a human should label next
-  - GNNOnCPG:              tiny per-language graph-feature scorer over the CPG
+  - HeuristicRiskScorer:   hand-tuned linear-feature risk scorer (renamed from
+                           GNNOnCPG in v7.3.4 — see class docstring for details)
 """
 from __future__ import annotations
 from .text_utils import extract_block as _shared_extract_block
@@ -184,8 +185,15 @@ class GNNResult:
     language: str = ""
 
 
-class GNNOnCPG:
-    """Tiny graph-feature scorer over per-function CPG neighborhoods.
+class HeuristicRiskScorer:
+    """Hand-tuned linear-feature risk scorer over per-function source.
+
+    v7.3.4: Renamed from `GNNOnCPG` to honestly reflect what this class does.
+    The previous name implied a Graph Neural Network operating on a Code
+    Property Graph — but the implementation is a fixed-weight logistic
+    regression over regex-extracted features. There is no graph, no neural
+    network, no learned weights, and no CPG. The rename closes the
+    marketing-vs-reality gap flagged by the secondary auditor.
 
     Features extracted per function:
       - num_calls:             call-site count (fan-out)
@@ -262,8 +270,17 @@ class GNNOnCPG:
         return 1.0 / (1.0 + math.exp(-z))
 
 
+# v7.3.4: Backward-compat alias for any external code that imports the old name.
+# Will be removed in v8.0.
+GNNOnCPG = HeuristicRiskScorer
+
+
 def scan_repo_with_gnn(repo_root: Path) -> List[GNNResult]:
-    """Walk a repo, detect language per file, and score every function."""
+    """Walk a repo, detect language per file, and score every function.
+
+    v7.3.4: Function name kept for backward compat, but internally uses
+    HeuristicRiskScorer (renamed from GNNOnCPG).
+    """
     from .multi_lang import get_language
     out: List[GNNResult] = []
     skip = {"node_modules", ".git", "vendor", "__pycache__", "dist", "build"}
@@ -275,6 +292,6 @@ def scan_repo_with_gnn(repo_root: Path) -> List[GNNResult]:
         lang = get_language(path)
         if lang == "unknown":
             continue
-        gnn = GNNOnCPG(language=lang)
-        out.extend(gnn.score_file(path))
+        scorer = HeuristicRiskScorer(language=lang)
+        out.extend(scorer.score_file(path))
     return out

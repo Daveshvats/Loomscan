@@ -213,6 +213,21 @@ _DB_RISK_PATTERNS: List[Tuple[str, str, Severity, str, str]] = [
      "Business logic: DB call inside a for-loop over a list — classic N+1 (1 query for the list, N for the inner lookups). Use JOIN FETCH in the @Query or batch-load via findAllById() before the loop.",
      "CWE-400"),
 
+    # v7.3.3: DB WRITE inside any loop (for, for-each, while) — N individual INSERTs/UPDATEs.
+    # Covers the multi-line `for (...) { ...; repo.save(x); }` case that the YAML rule
+    # `jpa-saveall-in-loop` misses (the YAML engine scans line-by-line, so the
+    # single-line YAML rule only fires on the rare compact form `for (X x : list) repo.save(x);`).
+    # This BL-miner pattern scans the full function body, so it catches the multi-line case.
+    # Note 1: use [^{]* for the for-loop header (not [^)]*) because the header may contain
+    #          nested parens like `users.size()` which would prematurely end the match.
+    # Note 2: use lazy [^{}]*? so the inner alternation can match before [^{}]* greedily
+    #          consumes everything up to the closing brace.
+    (r'(?:for|while)\s*\([^{]*\)\s*\{[^{}]*?(?:\.\s*(?:save|persist|merge|delete|update|insert)\s*\(|\b(?:saveAll|persistAll|mergeAll)\s*\()[^{}]*?\}',
+     "bl.db.write_in_loop",
+     Severity.HIGH,
+     "Business logic: DB write (save/persist/merge/delete) inside a loop — N individual INSERT/UPDATE statements. Use saveAll() / persist() in batch mode / batchUpdate() for a single bulk operation. Each repo.save() is a separate JDBC round-trip.",
+     "CWE-400"),
+
     # --- Pagination misuse ---
     # findAll(PageRequest.of(0, MAX_VALUE)) — defeats pagination
     (r'PageRequest\.of\s*\(\s*\d+\s*,\s*(?:Integer\.MAX_VALUE|99999|100000|1000000)\b',
@@ -431,6 +446,15 @@ def scan_python_business_logic(file_path: Path, repo_root: Path) -> List[Finding
                 elif rule_id == "bl.db.n_plus_1_in_loop":
                     if re.search(r'findAllById|saveAll|JOIN\s+FETCH|@EntityGraph', func_source, re.IGNORECASE):
                         suppressed = True
+                elif rule_id == "bl.db.write_in_loop":
+                    # v7.3.4: Scope suppression to the matched loop body ONLY.
+                    # The match object `m` captures the full `for(...) { ... }` text.
+                    # If the loop body itself calls saveAll/persistAll/addBatch, the
+                    # code is already using batch APIs and the finding is a false positive.
+                    # But saveAll in a DIFFERENT loop/method should NOT suppress this finding.
+                    matched_text = m.group(0) if m else func_source
+                    if re.search(r'\bsaveAll\s*\(|\bpersistAll\s*\(|\bmergeAll\s*\(|\baddBatch\s*\(|\bexecuteBatch\s*\(|\bbatchUpdate\s*\(', matched_text, re.IGNORECASE):
+                        suppressed = True
                 if suppressed:
                     continue
                 findings.append(Finding(
@@ -519,6 +543,11 @@ def _scan_regex_business_logic(file_path: Path, repo_root: Path) -> List[Finding
             start = max(0, match.start() - 1500)
             end = min(len(content), match.end() + 1500)
             context = content[start:end]
+            # v7.3.4: For loop-body rules, the suppression check must be scoped to
+            # the loop body itself (the matched text), NOT the ±1500 char window.
+            # The wide window spans multiple Java methods, causing false negatives
+            # when `saveAll` is used anywhere in the file.
+            loop_body = match.group(0)  # the full matched text (for(...) { ... })
             # Some patterns have specific suppression conditions
             suppressed = False
             if rule_id == "bl.db.read_modify_write_no_lock":
@@ -535,6 +564,13 @@ def _scan_regex_business_logic(file_path: Path, repo_root: Path) -> List[Finding
                     suppressed = True
             elif rule_id in ("bl.db.n_plus_1_in_loop",):
                 if re.search(r'findAllById|saveAll|JOIN\s+FETCH|@EntityGraph', context, re.IGNORECASE):
+                    suppressed = True
+            elif rule_id == "bl.db.write_in_loop":
+                # v7.3.4: Scope suppression to the loop body ONLY (not ±1500 chars).
+                # If the loop body itself calls saveAll/persistAll/addBatch, the
+                # code is already using batch APIs and the finding is a false positive.
+                # But saveAll in a DIFFERENT method should NOT suppress this finding.
+                if re.search(r'\bsaveAll\s*\(|\bpersistAll\s*\(|\bmergeAll\s*\(|\baddBatch\s*\(|\bexecuteBatch\s*\(|\bbatchUpdate\s*\(', loop_body, re.IGNORECASE):
                     suppressed = True
             if suppressed:
                 continue
@@ -603,6 +639,7 @@ def _get_db_bl_fix(rule_id: str) -> str:
         "bl.db.read_modify_write_no_lock": "Add `@Version` (optimistic lock) on the entity, or use `@Lock(LockModeType.PESSIMISTIC_WRITE)` on the repository method. Catch `OptimisticLockException` and retry.",
         "bl.db.unpaginated_endpoint": "Change signature to `Page<Entity> list(Pageable pageable)` and accept `?page=0&size=20` from the client. Cap `size` at server config (e.g., max 100).",
         "bl.db.n_plus_1_in_loop": "Pre-load related entities with `findAllById(ids)` before the loop, or use `@EntityGraph` / `JOIN FETCH` in the `@Query` to fetch them in one query.",
+        "bl.db.write_in_loop": "Replace `for (...) { repo.save(x); }` with `repo.saveAll(list)` — single JDBC batch INSERT. For raw JDBC, use `PreparedStatement.addBatch()` in the loop then `executeBatch()` once. Set `hibernate.jdbc.batch_size=50` in properties.",
         "bl.db.page_size_too_large": "Reject page sizes larger than server max (e.g., 100). Return 400 Bad Request if the client asks for more.",
         "bl.db.log_entity": "Log only the entity ID and operation, never the full entity. If you must log details, mask PII fields (email, phone, SSN) explicitly.",
     }

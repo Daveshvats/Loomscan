@@ -50,7 +50,7 @@ def scan_config_file(file_path, repo_root=None):
     if not file_path.exists() or not is_config_file(file_path): return []
     rel = str(file_path.relative_to(repo_root)) if repo_root else str(file_path)
     try: source = file_path.read_text(encoding="utf-8", errors="replace")
-    except: return []
+    except Exception: return []
     findings = []
     lines = source.splitlines()
     for i, line in enumerate(lines, 1):

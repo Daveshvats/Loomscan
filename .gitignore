@@ -92,3 +92,4 @@ worklog.md
 examples/sample-python-repo/.loomscan-*
 examples/sample-python-repo/.stca-*
 examples/sample-python-repo/loomscan-dashboard.html
+.loomscanignore

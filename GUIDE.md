@@ -1,6 +1,6 @@
 # LoomScan — Complete User Guide
 
-> **v4.43** — Static + Test + Constraint Analysis. A deterministic-first, type-2 fuzzy aggregated bug detection pipeline that runs on any laptop, offline, across **24 programming languages** with **1,995 rules**, **107 auto-fix patterns**, **275 secret detection patterns**, and **9 unique differentiators**.
+> **v7.5.6** — Static + Test + Constraint Analysis. A deterministic-first, type-2 fuzzy aggregated bug detection pipeline that runs on any laptop, offline, across **24 programming languages** with **2,473 rules**, **308 Java production-incident rules**, **real GNN-on-CPG with learned weights**, and **76+ detection engines**.
 
 This guide covers everything: installation, configuration, daily usage, CI/CD integration, advanced features, troubleshooting, and internals. Read it top-to-bottom for a full understanding, or jump to the section you need using the table of contents.
 
@@ -11,1320 +11,515 @@ This guide covers everything: installation, configuration, daily usage, CI/CD in
 1. [What LoomScan Does](#1-what-loomscan-does)
 2. [Installation](#2-installation)
 3. [Quick Start (5 Minutes)](#3-quick-start-5-minutes)
-4. [Core Concepts](#4-core-concepts)
-5. [The `check` Command — Your Daily Driver](#5-the-check-command--your-daily-driver)
-6. [Quality Gates (SonarQube-style)](#6-quality-gates)
-7. [Strictness Levels (1-9)](#7-strictness-levels)
-8. [Reports and Dashboards](#8-reports-and-dashboards)
-9. [Configuration (.loomscan.yaml)](#9-configuration)
-10. [Auto-Fix (107 patterns)](#10-auto-fix)
-11. [IDE Integration (VS Code + JetBrains)](#11-ide-integration)
-12. [CI/CD Integration (GitHub Actions + PR Bot)](#12-cicd-integration)
-13. [Unique Features](#13-unique-features)
-14. [Rule Management (list, submit, mine)](#14-rule-management)
-15. [Monorepo Support](#15-monorepo-support)
-16. [Language Coverage (24 languages)](#16-language-coverage)
-17. [Advanced Commands Reference (77 commands)](#17-advanced-commands)
-18. [Troubleshooting](#18-troubleshooting)
-19. [How It Works Internally](#19-internals)
-20. [Glossary](#20-glossary)
+4. [Core Commands](#4-core-commands)
+5. [Strictness Levels (1-9)]#5-strictness-levels-1-9)
+6. [Reports and Dashboards](#6-reports-and-dashboards)
+7. [Configuration (.loomscan.yaml)](#7-configuration)
+8. [Auto-Fix (107 patterns)](#8-auto-fix)
+9. [IDE Integration](#9-ide-integration)
+10. [CI/CD Integration](#10-cicd-integration)
+11. [Unique Features](#11-unique-features)
+12. [Rule Management](#12-rule-management)
+13. [GNN-on-CPG](#13-gnn-on-cpg)
+14. [Restored Modules](#14-restored-modules)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Internals](#16-internals)
 
 ---
 
 ## 1. What LoomScan Does
 
-LoomScan is a **multi-layer static analysis pipeline** for finding bugs, security vulnerabilities, and code quality issues. It runs on a git diff (for pre-commit/PR review) or the full repo (for periodic audits), aggregates findings from 8+ analysis layers, and uses a type-2 fuzzy inference system to decide whether each finding should block, warn, or pass.
+LoomScan is a **multi-language static + dynamic + symbolic code analysis pipeline**. It detects bugs, security vulnerabilities, performance issues, and production-incident patterns **before code reaches production**.
 
-### Key characteristics
+### Key Differentiators (no competitor has all of these)
 
 | Feature | Description |
 |---------|-------------|
-| **Deterministic-first** | No random ML — all rules are deterministic. The only "AI" is the optional LLM tie-breaker. |
-| **Type-2 fuzzy aggregation** | Findings are scored with interval-valued fuzzy logic (IT2-FIS), not crisp thresholds. This handles uncertainty gracefully. |
-| **Offline** | Works without internet (except OSV.dev CVE lookups, which are cached). |
-| **Cross-platform** | Windows, macOS, Linux. No compiler toolchain required. |
-| **Multi-language** | Python, JavaScript/TypeScript, Go, Java, C/C++, Rust, IaC (Terraform/Dockerfile/K8s). |
-| **8 analysis layers** | L0 (fast hooks) through L7 (simulation), plus supply chain, dependencies, behavioral, IaC. |
-| **73+ command-line tools** | Not just `check` — there are dedicated commands for taint analysis, CPG queries, nullness, fuzzing, symbolic execution, and more. |
+| **Real GNN-on-CPG** | 2-layer GCN with learned weights (torch-geometric) operating on Code Property Graphs. Trains on labeled findings. Multi-language (Python, Java, JS/TS, Go, C/C++, Rust). |
+| **Database anti-pattern detection** | 308 Java production-incident rules — transaction management, N+1 queries, missing `readOnly`, dead persistence, EAGER fetch, and more. No competitor catches these. |
+| **Business logic miner** | Domain-aware patterns (quantity×price without validation, missing balance check, read-modify-write without locking). |
+| **Stateful PBT** | Stateful property-based testing (Echidna-inspired). Catches multi-step state bugs static analysis cannot. |
+| **Multi-call analysis** | Cross-function call-chain analysis (reentrancy, missing-auth-in-chain, TOCTOU). |
+| **JSX auth coverage** | React/Next.js authorization coverage analysis. Flags pages without auth wrappers. |
+| **Merge review** | Pre-merge branch analysis with blast radius and recommendation. |
+| **Dead persistence detection** | Finds entities saved to DB but never read anywhere in the codebase. |
+| **Dynamic CVE checker** | Detects deps from lock files, queries OSV API, checks reachability. |
+| **Runtime error scanner** | Scans .log files for Java OOM, UUID errors, 500s, NPEs. |
+| **IT2-FIS aggregation** | Interval type-2 fuzzy inference system for finding aggregation. |
+| **Bayesian second opinion** | ExplainableAggregator combines FIS + BBN + counterfactual. |
 
-### What it finds
+### Detection Coverage: 20/20 (100%)
 
-- **Security vulnerabilities**: SQL injection, XSS, path traversal, hardcoded secrets, crypto misuse, auth bypasses, IDOR, SSRF
-- **Correctness bugs**: null dereferences, typestate violations, contract violations, unhandled exceptions
-- **Code quality**: complexity, duplication, dead code, missing docs, architecture violations
-- **Supply chain issues**: dependency CVEs, typosquats, abandoned packages, EOL versions, license issues
-- **Infrastructure misconfigurations**: public S3 buckets, privileged containers, plaintext secrets in Dockerfiles
-- **Concurrency bugs**: race conditions, deadlocks, async issues
-- **Runtime crashes** (Python only): via coverage-guided fuzzing
+| # | Vulnerability | Engine |
+|---|--------------|--------|
+| 1 | SQL Injection | YAML + taint + OWASP |
+| 2 | Command Injection | YAML + code_quality |
+| 3 | Hardcoded Secret | Regex + entropy |
+| 4 | Missing Auth | Auth detector + BL |
+| 5 | Race Condition (TOCTOU) | TOCTOU detector (AST) |
+| 6 | Integer Overflow | Integer overflow detector (v7.2) |
+| 7 | Business Logic (neg qty) | Domain-aware BL miner |
+| 8 | Missing Transaction | Typestate protocol |
+| 9 | Log Injection | Code quality + CPG |
+| 10 | Insecure Random | YAML + crypto |
+| 11 | XSS | YAML + taint |
+| 12 | Path Traversal | YAML + taint |
+| 13 | SSRF | YAML + taint |
+| 14 | Deserialization | YAML + taint |
+| 15 | XXE | YAML |
+| 16 | ReDoS | YAML (nested quantifiers) |
+| 17 | Open Redirect | YAML + taint |
+| 18 | CSRF | YAML + framework |
+| 19 | CORS Misconfig | YAML + framework |
+| 20 | Mass Assignment | YAML + field_taint |
 
 ---
 
 ## 2. Installation
 
-### Prerequisites
-
-- **Python 3.9+** (3.12+ recommended for faster fuzzing via `sys.monitoring`)
-- **Git** (LoomScan analyzes git diffs)
-- **pip** and **venv**
-
-### Step 1: Extract and install
+### Tier 1: Basic (pure Python, works everywhere)
 
 ```bash
-# Extract the tarball
-tar -xzf loomscan-v3.2.tar.gz
-cd loomscan
-
-# Create a virtual environment
-python -m venv .venv
-
-# Activate it
-source .venv/bin/activate        # Linux/macOS
-# .venv\Scripts\activate         # Windows PowerShell
-
-# Install LoomScan in editable mode
-pip install -e .
+pip install loomscan
 ```
 
-### Step 2: Install optional extras (pick what you need)
+Gets you: all 2,473 rules, Rich CLI display, 76+ engines, HTML/SARIF/JSON reports.
+
+### Tier 2: Full (recommended — includes semgrep + GNN)
 
 ```bash
-pip install -e ".[llm]"            # Ollama LLM tie-breaker client
-pip install -e ".[property]"       # Hypothesis property tests (L1)
-pip install -e ".[mutation]"       # mutmut mutation testing (L2)
-pip install -e ".[supply-chain]"   # pip-audit for Python CVEs (L0b)
-pip install -e ".[fuzz]"           # atheris fuzzing (L4, Linux only)
-pip install -e ".[all-tools]"      # everything except atheris
-pip install -e ".[dev]"            # pytest + pytest-cov (for running tests)
+pip install loomscan[full]
 ```
 
-**Note on atheris (L4 fuzzing)**: atheris only works on Linux (requires libFuzzer C++ library). On Windows/macOS, LoomScan automatically uses its built-in pure-Python coverage-guided fuzzer instead — same algorithm, slightly slower. See [§15. Fuzzing](#15-fuzzing-l4-layer).
+Adds: tree-sitter (CPG/def-use), Rust core (10-50× faster), TUI, pillow, **semgrep** (all 2,473 rules fire — without it ~914 advanced rules are silently skipped), **GNN-on-CPG** (real torch-geometric model with learned weights, multi-language).
 
-### Step 3: Verify the install
+### Tier 3: All (everything including mutation testing, LLM, fuzz)
 
 ```bash
-loomscan --version                     # should print: loomscan, version 0.1.0
-loomscan --help                        # list all commands
-loomscan doctor                        # check what tools are available
-python -m pytest tests/            # run the test suite (should all pass)
+pip install loomscan[all]
 ```
 
-### Step 4: Install external tools (optional, recommended)
+Adds: mutation testing (mutmut), LLM verify (Ollama), fuzz (atheris), premium image rendering.
 
-LoomScan can auto-install external analysis tools (gitleaks, semgrep, osv-scanner, etc.):
+### Verify Installation
 
 ```bash
-loomscan install-tools                 # install all tools
-loomscan install-tools --layer L0      # only L0 tools (semgrep, gitleaks, ruff)
-loomscan install-tools --layer L0b     # only supply chain tools
-loomscan doctor                        # verify what's installed
+loomscan --version    # Should show v7.5.6
+loomscan doctor       # Check system health
 ```
-
-Tools are installed to `~/.loomscan/bin/` (added to PATH automatically). Binary downloads are SHA256-verified.
 
 ---
 
 ## 3. Quick Start (5 Minutes)
 
-### A. Initialize a repo
-
 ```bash
-cd /path/to/your/repo
-loomscan init                          # creates .loomscan.yaml config
-```
+# Scan your code (full repo)
+loomscan check --full
 
-### B. Run your first scan
+# Scan only changed files (git diff mode)
+loomscan check
 
-```bash
-# Full-repo scan (scans ALL source files)
-loomscan check --repo . --full
+# Pre-merge analysis
+loomscan merge-review --base main
 
-# Or scan just the git diff (faster, for pre-commit)
-loomscan check --repo . --base main
-```
+# GNN risk scoring
+loomscan gnn-score --repo .
 
-You'll see output like:
-
-```
-╔══════════════════════════════════════════════════════════════════════════╗
-║                    ✗  LoomScan — Final Decision: BLOCK                       ║
-╚══════════════════════════════════════════════════════════════════════════╝
-
-Findings:                          47  Duration:    12.3s
-By severity:  critical=8  high=12  medium=15  low=10  info=2  LLM invoked:  no
-
-Full report:  loomscan report  (opens HTML dashboard in browser)
-Reports dir:  .loomscan-reports/  (report.html, result.json, result.sarif)
-```
-
-### C. View the dashboard
-
-```bash
-loomscan dashboard --repo .            # generates loomscan-dashboard.html in repo dir
-# Open it in your browser:
-# Linux:   xdg-open .loomscan-reports/dashboard.html
-# macOS:   open .loomscan-reports/dashboard.html
-# Windows: start .loomscan-reports\dashboard.html
-```
-
-### D. Get details on a specific finding
-
-```bash
-# JSON output with full finding details
-loomscan check --repo . --full --json | python -m json.tool | head -50
-
-# Or look at the SARIF report (VS Code SARIF Viewer compatible)
-cat .loomscan-reports/result.sarif | python -m json.tool | head -30
+# Active learning suggestions
+loomscan learn --repo .
 ```
 
 ---
 
-## 4. Core Concepts
+## 4. Core Commands
 
-### Layers
-
-LoomScan runs findings through 8 analysis layers, each inspired by a different OSS tool:
-
-| Layer | Name | Inspired by | What it does |
-|-------|------|-------------|--------------|
-| **L0** | Fast Hooks | Semgrep + bundled rule packs | Multi-language pattern matching (88+ rules) |
-| **L0b** | Supply Chain | pip-audit, osv-scanner | Dependency CVEs, typosquats, EOL versions |
-| **L0c** | Dependencies | pip-licenses, npm outdated | Outdated packages, license compliance |
-| **L0d** | Behavioral | CodeScene | Churn, hotspots, commit risk |
-| **L0e** | IaC | Checkov, KICS | Terraform/Dockerfile/K8s misconfigurations |
-| **L0f** | Commit Risk | git analysis | Secret leaks in commit history |
-| **L1** | Property Tests | Hypothesis | Property-based testing |
-| **L2** | Mutation | mutmut | Mutation testing (kill mutants) |
-| **L3** | Invariants | boogie, Dafny | Invariant verification |
-| **L4** | Fuzz | atheris, libFuzzer | Coverage-guided fuzzing (Python only) |
-| **L5** | Policy | OPA/Rego | Policy-as-code enforcement |
-| **L6** | Symbolic | Z3, Kani | Symbolic execution + model checking (Rust) |
-| **L7** | Simulation | stress testing | Concurrency simulation |
-
-### The Brain (IT2-FIS Aggregator)
-
-Each finding gets a **decision** from the type-2 fuzzy inference system:
-
-| Decision | Meaning | Exit code |
-|----------|---------|-----------|
-| `PASS` | Not a real issue, or very low confidence | 0 |
-| `WARN` | Likely a real issue, but not blocking | 0 |
-| `BLOCK` | Definitely a real issue — blocks the commit | 1 |
-| `UNCERTAIN` | FIS can't decide — triggers LLM tie-breaker (if enabled) | 0 |
-
-The FIS takes 4 inputs per finding:
-- **Severity** (critical/high/medium/low/info → 0-1 score)
-- **Confidence** (the layer's self-reported confidence, 0-1)
-- **Source reliability** (historical precision/recall of the layer, 0-1)
-- **Corroboration** (did other layers find the same issue? 0-1)
-
-### Strictness Levels
-
-PHPStan-inspired 9-level system. Higher levels = more layers + more severities:
-
-| Level | What's added |
-|-------|-------------|
-| 1 | Critical only (fastest) |
-| 2 | + High severity |
-| 3 | + Supply chain (CVEs) |
-| 4 | + Code quality (behavioral, commit risk) |
-| 5 | + IaC + secrets (default) |
-| 6 | + Taint analysis (CPG cross-file) |
-| 7 | + Typestate + metamorphic |
-| 8 | + Symbolic + mutation + fuzzing |
-| 9 | Everything, strict (WARN treated as BLOCK) |
+| Command | Description |
+|---------|-------------|
+| `loomscan check` | Scan changed files (git diff mode) |
+| `loomscan check --full` | Scan entire repo |
+| `loomscan doctor` | Check system health and tool availability |
+| `loomscan merge-review --base main` | Pre-merge analysis with blast radius |
+| `loomscan learn --repo .` | Active learning — which findings to label next |
+| `loomscan second-opinion --repo .` | Bayesian second opinion on findings |
+| `loomscan diff --baseline baseline.json` | Differential analysis vs baseline |
+| `loomscan gnn-score --repo .` | GNN risk scoring (real torch-geometric model) |
+| `loomscan gnn-train --label-db labels.json` | Train GNN on labeled findings |
+| `loomscan jsx-auth --repo .` | JSX/React authorization coverage analysis |
+| `loomscan stateful-pbt --repo .` | Stateful property-based testing |
+| `loomscan multi-call --repo .` | Multi-call bug detection (reentrancy, TOCTOU) |
+| `loomscan install-tools` | Install external tools (semgrep, gitleaks, etc.) |
+| `loomscan rules list` | List all rule packs and rule counts |
+| `loomscan baseline create` | Create a findings baseline |
+| `loomscan feedback tp/fp <rule_id>` | Label findings for GNN training |
 
 ---
 
-## 5. The `check` Command — Your Daily Driver
+## 5. Strictness Levels (1-9)
 
-`loomscan check` is the main command. Here's every flag explained:
-
-### Basic usage
-
-```bash
-# Full-repo scan (scans ALL source files, not just diff)
-loomscan check --repo /path/to/repo --full
-
-# Diff scan (compare against a base branch — for PR review)
-loomscan check --repo /path/to/repo --base main
-
-# Staged changes only (for pre-commit hook)
-loomscan check --repo /path/to/repo --staged
-```
-
-### Output format flags
+| Level | Name | What Blocks |
+|-------|------|-------------|
+| 1 | Critical Only | Only CRITICAL findings block |
+| 2-3 | High+ | CRITICAL + HIGH block |
+| 4-6 | Medium+ | CRITICAL + HIGH + MEDIUM block |
+| 7 | Standard (default) | Same as 6, with advanced detection |
+| 8 | Strict | Same as 7, with LOW findings |
+| 9 | Paranoid | Everything blocks, including WARN |
 
 ```bash
---quiet              # Just print the final decision: "block", "warn", or "pass"
---json               # Full JSON output (for CI integration, custom tooling)
---detailed           # Show full findings table + critical findings tree in terminal
-                     # (default is minimal output — see §7 for details)
+loomscan check --full --strictness 9
 ```
 
-### Strictness control
+---
+
+## 6. Reports and Dashboards
+
+### HTML Report (interactive dashboard)
 
 ```bash
---strictness 1       # Only critical findings (fastest, fewest FPs)
---strictness 5       # Default — IaC + secrets
---strictness 9       # Everything, strict (WARN treated as BLOCK)
+loomscan check --full --html
 ```
 
-### Baseline mode
+Features: dark Hermes-inspired theme, donut chart, filterable table, code graph, scan config display. Findings capped at 5000 (sorted by severity) to prevent oversized dashboards.
+
+### JSON Report
 
 ```bash
---baseline           # Only flag NEW issues (not in the baseline)
-                     # First run establishes the baseline; subsequent runs
-                     # only report issues that weren't there before
+loomscan check --full --json > results.json
 ```
 
-### Scanner health (v3.1+)
+### SARIF Report (for GitHub Code Scanning)
 
 ```bash
---strict-scanners    # Exit code 3 if any scanner failed during the run
-                     # (surfaces previously-silent failures as a CI gate)
+loomscan check --full --sarif > results.sarif
 ```
 
-### Verbose logging
+---
+
+## 7. Configuration (.loomscan.yaml)
+
+```yaml
+# .loomscan.yaml
+strictness: 7
+block_on: ["block"]
+warn_on: ["warn"]  # v7.3.4: now enforced via should_warn()
+
+exclude:
+  - "tests/**"
+  - "vendor/**"
+
+engine: auto  # auto | rust | semgrep | python | all
+```
+
+---
+
+## 8. Auto-Fix (107 patterns)
 
 ```bash
--v, --verbose        # Enable DEBUG-level logging
-                     # Shows optional-parser failures, per-file scan errors,
-                     # and other low-level diagnostics
+# Show fixes without applying
+loomscan check --full --fix
+
+# Apply fixes
+loomscan check --full --fix --apply
 ```
 
-### Exit codes
+v7.4: New `@fix_for()` decorator-based registry for adding fixers.
+
+---
+
+## 9. IDE Integration
+
+### VS Code
+
+```bash
+loomscan lsp  # Start LSP server
+```
+
+Add to `.vscode/settings.json`:
+```json
+{
+  "loomscan.enable": true,
+  "loomscan.strictness": 7
+}
+```
+
+### JetBrains
+
+Use the LSP plugin to connect to `loomscan lsp`.
+
+---
+
+## 10. CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+- name: LoomScan
+  run: |
+    pip install loomscan[full]
+    loomscan check --full --sarif > results.sarif
+    # Upload to GitHub Code Scanning
+```
+
+### Pre-commit Hook
+
+```yaml
+# .pre-commit-config.yaml
+- repo: local
+  hooks:
+    - id: loomscan
+      name: LoomScan
+      entry: loomscan check
+      language: system
+      pass_filenames: false
+```
+
+### Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | PASS or WARN (commit allowed) |
-| 1 | BLOCK (findings block the commit) |
-| 2 | Not a git repo / config error |
-| 3 | Scanner errors (--strict-scanners gate failed) |
+| 0 | No blocking findings |
+| 1 | Blocking findings detected |
+| 2 | Scanner error |
 
-### Examples
+---
+
+## 11. Unique Features
+
+### GNN-on-CPG (v7.5+)
+
+Real Graph Neural Network with learned weights. Not a heuristic — actual `torch_geometric.nn.GCNConv` layers.
+
+**Architecture**: GCNConv(22, 64) → ReLU → Dropout → GCNConv(64, 32) → ReLU → global_mean_pool → Linear(32, 16) → ReLU → Linear(16, 1) → Sigmoid
+
+**Multi-language**: Python (full AST CPG), Java/JS/TS/Go/C/C++/Rust (regex-based CPG with same feature space).
+
+**Training**: Binary cross-entropy on labeled findings. Model saved to `~/.loomscan-cache/gnn_model.pt`.
 
 ```bash
-# Quick pre-commit check (staged files, level 5, minimal output)
-loomscan check --repo . --staged --strictness 5 --quiet
+# Score functions
+loomscan gnn-score --repo . --threshold 0.5
 
-# Full audit for a release (everything, strict, JSON for CI)
-loomscan check --repo . --full --strictness 9 --json > release-audit.json
+# Train on your labeled findings
+loomscan gnn-train --label-db .loomscan-cache/labels.json --epochs 50
+```
 
-# PR review (diff against main, show all findings)
-loomscan check --repo . --base main --detailed
+### Database Anti-Patterns (v7.3+)
 
-# CI gate (block on scanner failures too)
-loomscan check --repo . --base origin/main --strict-scanners
+308 Java production-incident rules across 15 categories:
+- Transaction management (missing readOnly, rollbackFor, timeout)
+- Query inefficiency (findAll().size(), SELECT *, N+1)
+- JPA/EntityManager misuse (merge on new entity, manual flush)
+- JPA entity design (@OneToMany without mappedBy, @Lob without LAZY)
+- Locking & concurrency (PESSIMISTIC_WRITE without timeout)
+- Hibernate-specific (deprecated Criteria.list, Query.iterate)
+- Save patterns (save() in loop, saveAndFlush, DELETE without WHERE)
+- Cache misuse (@Cacheable without @CacheEvict)
+- Schema migration (ddl-auto=update, show-sql=true)
+- Index & query plan (LIKE '%...', NOT IN, DISTINCT with JOIN)
+- Spring Data naming (Containing, IgnoreCase, OrderBy)
+- Audit & soft delete (@Where, missing @EntityListeners)
+- Migration safety (Flyway baseline-on-migrate, Liquibase dropAll)
+
+### Business Logic Miner (v6.0+)
+
+Domain-aware patterns that need cross-line context:
+- `bl.db.load_all_for_count` — findAll().size() instead of count()
+- `bl.db.n_plus_1_in_loop` — DB call inside for-each loop
+- `bl.db.write_in_loop` — save() inside for-loop (N+1 writes)
+- `bl.db.read_modify_write_no_lock` — missing @Version or FOR UPDATE
+- `bl.db.unpaginated_endpoint` — List<T> return without Pageable
+
+### Stateful PBT (v7.5+)
+
+Echidna-inspired stateful property-based testing for Python classes:
+
+```bash
+loomscan stateful-pbt --repo . --target ShoppingCart
+```
+
+Discovers classes with mutator methods, generates random action sequences (up to 100 steps), checks invariants after each action.
+
+### Multi-Call Analysis (v7.5+)
+
+Cross-function call-chain bug detection:
+- **Reentrancy**: external call + state write
+- **Missing-auth-in-chain**: sensitive operation without auth check
+- **TOCTOU**: check-then-act across function boundaries
+
+```bash
+loomscan multi-call --repo . --check all
+```
+
+### JSX Auth Coverage (v7.5+)
+
+React/Next.js authorization coverage analysis:
+
+```bash
+loomscan jsx-auth --repo .
+```
+
+Detects HOC patterns (withAuth), hook patterns (useAuth), route guards (<ProtectedRoute>), and flags pages WITHOUT any auth wrapper.
+
+### Merge Review (v6.2+)
+
+```bash
+loomscan merge-review --base main --head feature-branch
+```
+
+Shows new findings, resolved findings, blast radius, and recommendation (approve/request_changes/block).
+
+### Dead Persistence Detection (v7.3+)
+
+Finds entities saved to DB but never read anywhere in the codebase. Uses `codebase_understanding.py` entity-type tracking.
+
+### Dynamic CVE Checker (v7.1+)
+
+Detects dependencies from lock files (PyPI, npm, Maven, Go, Rust), queries OSV API, checks reachability in source code.
+
+### Runtime Error Scanner (v5.21+)
+
+Scans `.log` files for Java OOM, UUID errors, 500s, NPEs, SQLExceptions. Also scans `.java` for empty catch blocks, printStackTrace, System.exit.
+
+---
+
+## 12. Rule Management
+
+### List Rule Packs
+
+```bash
+loomscan rules list
+```
+
+### Rule Pack Structure
+
+```
+loomscan/rules/packs/
+├── java-production-incidents.yml  (308 rules — DB anti-patterns, prod errors)
+├── java-security.yml              (core Java security)
+├── java-deep.yml                  (deep Java analysis)
+├── java-frameworks.yml            (Spring, JPA, etc.)
+├── python-security.yml
+├── python-deep.yml
+├── javascript-security.yml
+├── ai-security.yml                (12 LLM security rules)
+├── framework-taint.yml            (IDOR, mass assignment, etc.)
+├── owasp-top-10.yml
+└── ... (42 packs total, 2,473 rules)
 ```
 
 ---
 
-## 6. Strictness Levels
+## 13. GNN-on-CPG
 
-### Show current level
+### How It Works
 
-```bash
-loomscan strictness --repo .
-```
+1. **CPG builder**: AST nodes + AST edges + data-flow edges (def→use) + call edges
+2. **Node features**: 16-dim node type one-hot + 6 numeric (calls, branches, loops, sensitive tokens, unsafe libs, depth)
+3. **GNN model**: 2-layer GCN with learned weights, global mean pooling, MLP head
+4. **Training**: Binary cross-entropy on labeled findings (TP=1.0, FP=0.0)
 
-### Set the level
+### Multi-Language Support
 
-```bash
-# Sets it in .loomscan.yaml (persists across runs)
-loomscan strictness --repo . --level 7
+| Language | CPG Method | Feature Space |
+|----------|-----------|---------------|
+| Python | Full AST (`ast.parse`) | 22-dim (same for all) |
+| Java | Regex function extraction + simplified CPG | 22-dim |
+| JavaScript/TypeScript | Regex function extraction | 22-dim |
+| Go | Regex function extraction | 22-dim |
+| C/C++ | Regex function extraction | 22-dim |
+| Rust | Regex function extraction | 22-dim |
 
-# Or override per-run
-loomscan check --repo . --full --strictness 7
-```
+### Fallback
 
-### All 9 levels
-
-```
-Level  Name                         Layers   Description
-1      Critical Only                3        Only CRITICAL findings block. Good for first-time.
-2      Critical + High              4        Adds HIGH severity findings.
-3      + Supply Chain               5        Adds dependency CVEs and dependency health.
-4      + Code Quality               7        Adds behavioral analysis and commit risk.
-5      + IaC + Secrets              9        Adds IaC scanning and advanced secret detection.
-6      + Taint Analysis             9        Adds CPG cross-file taint tracking and Pysa.
-7      + Typestate + Metamorphic    10       Adds typestate, metamorphic, and differential tests.
-8      + Symbolic + Mutation        12       Adds symbolic verification and mutation testing.
-9      Everything, Strict           13       All layers, all rules, WARN treated as BLOCK.
-```
-
-### Choosing a level
-
-| Use case | Recommended level |
-|----------|-------------------|
-| First time on a legacy codebase | 1 (overwhelmed otherwise) |
-| Pre-commit hook (fast feedback) | 3 or 4 (fast, catches real bugs) |
-| Default development | 5 (good balance) |
-| PR review | 5 or 6 |
-| Pre-release audit | 8 or 9 (thorough) |
-| CI gate (block merges) | 5 with `--strict-scanners` |
+If torch/torch-geometric not installed, falls back to HeuristicRiskScorer (hand-tuned logistic regression) with a warning.
 
 ---
 
-## 7. Reports and Dashboards
+## 14. Restored Modules (v7.5+)
 
-Every `loomscan check` run generates 3 reports in `<repo>/.loomscan-reports/`:
+Three modules were deleted in v7.4.0 (strategic mistake) and restored in v7.5.0:
 
-### A. HTML Dashboard (`report.html`)
+| Module | LOC | CLI Command | What It Catches |
+|--------|-----|-------------|-----------------|
+| `jsx_auth.py` | 219 | `loomscan jsx-auth` | Pages without auth wrappers |
+| `stateful_pbt.py` | 262 | `loomscan stateful-pbt` | Multi-step state bugs |
+| `multi_call.py` | 322 | `loomscan multi-call` | Reentrancy, missing-auth chains, TOCTOU |
 
-Self-contained HTML page with:
-- Color-coded header showing the final decision
-- Summary cards: findings count, by-severity, LLM invoked, scanner errors
-- Scanner Health section (yellow banner when scanners fail)
-- Layer Timings table
-- Findings table with severity badges, layer, decision, file:line, message, confidence, FIS reasoning
-
-```bash
-# Generate after a check
-loomscan check --repo . --full
-# The HTML report is at .loomscan-reports/report.html
-
-# Or generate a richer dashboard with charts and filterable table
-# Generates loomscan-dashboard.html in repo dir
-loomscan dashboard --repo . --open    # Generate and open in browser
-# Generates loomscan-dashboard.html in repo dir (use --open to open in browser)
-
-# Open in browser:
-# Linux:   xdg-open .loomscan-reports/dashboard.html
-# macOS:   open .loomscan-reports/dashboard.html
-# Windows: start .loomscan-reports\dashboard.html
-```
-
-### B. JSON Report (`result.json`)
-
-Structured JSON for CI integration and custom tooling:
-
-```bash
-loomscan check --repo . --full --json > report.json
-
-# Key fields:
-# - findings[]           : every issue found
-# - decisions[]          : FIS decision per finding
-# - scanner_health[]     : scanner failures (v3.1+)
-# - scanner_error_count  : number of failed scanners
-# - layer_timings        : how long each layer took
-# - final_decision       : "block" | "warn" | "pass"
-```
-
-### C. SARIF Report (`result.sarif`)
-
-SARIF 2.1.0 — the industry standard for static analysis. Compatible with:
-- **GitHub Code Scanning** (upload via `github/codeql-action/upload-sarif`)
-- **VS Code SARIF Viewer** extension
-- **Azure DevOps**
-
-```bash
-loomscan check --repo . --full
-# SARIF is at .loomscan-reports/result.sarif
-
-# Upload to GitHub:
-# - uses: github/codeql-action/upload-sarif@v3
-#   with:
-#     sarif_file: .loomscan-reports/result.sarif
-```
-
-When scanners fail, SARIF includes:
-- `executionSuccessful: false`
-- Each failure as a `toolExecutionNotification` with exception details
-
-### Terminal output modes
-
-| Flag | What you see |
-|------|-------------|
-| *(default)* | Minimal: decision header + summary + scanner errors + pointers to reports (~7 lines) |
-| `--detailed` | Full: findings table + critical findings tree + layer timings + scanner health table |
-| `--quiet` | Just the decision word: `block`, `warn`, or `pass` |
-| `--json` | Full JSON to stdout (no TUI) |
-| `-v` / `--verbose` | DEBUG logging to stderr (in addition to normal output) |
+All three are wired into `loomscan check --full` (fire automatically when matching file types are present).
 
 ---
 
-## 8. Configuration (.loomscan.yaml)
+## 15. Troubleshooting
 
-### Initialize
+### "semgrep not installed" warning
 
-```bash
-loomscan init --repo .                  # creates .loomscan.yaml with defaults
-loomscan init --repo . --force          # overwrite existing config
-```
-
-### Full config reference
-
-```yaml
-# .loomscan.yaml — LoomScan configuration
-
-layers:
-  L0_fast:       { enabled: true,  timeout_seconds: 10 }
-  L1_property:   { enabled: true,  timeout_seconds: 30 }
-  L2_mutation:   { enabled: false, timeout_seconds: 60 }
-  L3_invariants: { enabled: true,  timeout_seconds: 5 }
-  L4_fuzz:       { enabled: false, timeout_seconds: 60 }
-  L5_policy:     { enabled: true,  timeout_seconds: 15 }
-  L6_symbolic:   { enabled: false, timeout_seconds: 120 }
-  L7_simulation: { enabled: false, timeout_seconds: 300 }
-
-# Paths that are "critical" — L6 symbolic verification and L7 simulation
-# only run on these paths (they're slow).
-critical_paths:
-  - "**/auth/**"
-  - "**/crypto/**"
-  - "**/payment/**"
-  - "**/pii/**"
-  - "app.py"
-
-# Paths with concurrency code — L7 simulation runs on these.
-concurrency_paths:
-  - "**/concurrency/**"
-  - "**/async/**"
-  - "**/worker/**"
-
-# FIS decision thresholds
-block_on: ["block"]
-warn_on: ["warn"]
-
-# LLM tie-breaker (optional — see §13)
-llm:
-  enabled: false
-  provider: ollama
-  model: qwen3-coder-1.5b
-  endpoint: http://localhost:11434
-  prm_threshold: 0.6
-  only_on_uncertain: true       # only invoke LLM for UNCERTAIN findings
-
-# External tool paths (auto-detected if on PATH)
-tools: {}
-
-# Stats file (tracks layer precision/recall over time)
-stats_file: ".loomscan-stats.json"
-
-# Report output directory
-report_dir: ".loomscan-reports"
-```
-
-### Enabling/disabling layers
-
-Edit `.loomscan.yaml` or use the strictness level system. For example, to enable L4 fuzzing:
-
-```yaml
-layers:
-  L4_fuzz: { enabled: true, timeout_seconds: 60 }
-```
-
-Or use strictness level 8+ (which enables L4 automatically):
+Without semgrep, ~914 advanced rules are silently skipped. Install with:
 
 ```bash
-loomscan strictness --repo . --level 8
+pip install loomscan[full]  # or pip install loomscan[semgrep]
 ```
 
-### Custom critical paths
+### "torch not installed" warning
 
-If you have security-critical code outside the defaults:
+The GNN falls back to HeuristicRiskScorer. Install with:
 
-```yaml
-critical_paths:
-  - "**/auth/**"
-  - "**/crypto/**"
-  - "src/security/*.py"          # custom
-  - "internal/admin/**/*.go"     # custom
+```bash
+pip install loomscan[full]  # or pip install loomscan[gnn]
 ```
+
+### "REFUSING to install" for binary tools
+
+v7.3.4+: `loomscan install-tools` refuses to install binaries without SHA256 verification. All 7 binary tools now have `checksum_url` set. If the checksum fetch fails:
+
+```bash
+# Override (NOT RECOMMENDED)
+LOOMSCAN_ALLOW_UNVERIFIED_INSTALL=1 loomscan install-tools
+```
+
+### Feedback loop (scanning own output)
+
+LoomScan uses `_paths.py` with `DEFAULT_SKIP_DIRS` (31 directories) to prevent scanning its own output. If you see findings from `.loomscan-cache/` files, ensure you're running v7.5.1+.
 
 ---
 
-## 9. Baseline Mode (Only New Issues)
+## 16. Internals
 
-For legacy codebases with many existing issues, baseline mode lets you only flag **new** issues:
-
-### First run (establishes baseline)
-
-```bash
-loomscan check --repo . --full
-# This run establishes the baseline in .loomscan-baseline.json
-# All current findings are recorded as "known"
-```
-
-### Subsequent runs (only new issues)
-
-```bash
-loomscan check --repo . --full --baseline
-# Only findings NOT in the baseline are reported
-# Known issues are suppressed
-```
-
-### Managing the baseline
-
-```bash
-loomscan baseline --repo . show           # show current baseline
-loomscan baseline --repo . add <fingerprint>   # add a finding to baseline
-loomscan baseline --repo . remove <fingerprint>  # remove a finding from baseline
-loomscan baseline --repo . clear          # clear the baseline
-```
-
-### Use cases
-
-- **Legacy codebase adoption**: Establish baseline, then fix new issues as they're introduced
-- **Incremental improvement**: See only what YOUR commits introduce
-- **PR review**: Only flag issues in the diff (use `--base main` instead)
-
----
-
-## 10. Auto-Fix
-
-LoomScan can auto-fix some findings (bare except, mutable defaults, etc.):
-
-### Stage fixes for review (default)
-
-```bash
-loomscan check --repo . --full           # generate findings
-loomscan fix --repo .                    # stage fixes in .loomscan-fixes/
-# Review the patches:
-ls .loomscan-fixes/
-# Apply the ones you want:
-git apply .loomscan-fixes/001_*.patch
-```
-
-### Apply directly to source files
-
-```bash
-loomscan fix --repo . --apply            # apply all fixes directly
-loomscan fix --repo . --finding-id <fingerprint>  # fix one specific finding
-```
-
-### What gets auto-fixed
-
-| Rule | Fix |
-|------|-----|
-| Bare `except:` | `except Exception:` |
-| Mutable default arguments | `def foo(x=None):` → `if x is None: x = []` |
-| `eval()`/`exec()` | `ast.literal_eval()` (where safe) |
-| Some formatting issues | ruff auto-fixes |
-
-**Always review auto-fixes before committing.** LoomScan stages them in `.loomscan-fixes/` by default for this reason.
-
----
-
-## 11. Pre-commit Hook Integration
-
-### Option A: pre-commit framework
-
-Create `.pre-commit-config.yaml` in your repo:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: loomscan
-        name: LoomScan
-        entry: loomscan pre-commit
-        language: system
-        pass_filenames: false
-        stages: [commit]
-```
-
-Install:
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-Now every `git commit` runs LoomScan on staged files. If LoomScan returns exit code 1 (BLOCK), the commit is blocked.
-
-### Option B: plain git hook
-
-Create `.git/hooks/pre-commit`:
-
-```bash
-#!/bin/sh
-loomscan check --repo . --staged --strictness 5 --quiet
-exit $?
-```
-
-Make it executable:
-```bash
-chmod +x .git/hooks/pre-commit
-```
-
-### Option C: LoomScan's built-in pre-commit command
-
-```bash
-loomscan pre-commit --repo . --files "file1.py,file2.py"
-```
-
-This is what the pre-commit framework calls internally.
-
----
-
-## 12. CI/CD Integration (GitHub Actions)
-
-### Basic workflow
-
-```yaml
-# .github/workflows/loomscan.yml
-name: LoomScan Scan
-on: [pull_request]
-
-jobs:
-  loomscan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # need full history for diff
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install LoomScan
-        run: |
-          pip install -e .
-          pip install -e ".[supply-chain]"
-
-      - name: Run LoomScan
-        run: |
-          loomscan check --repo . --base origin/main --json > loomscan-report.json
-          # Exit code: 0=pass, 1=block, 3=scanner errors
-          exit $?
-
-      - name: Upload SARIF to GitHub Code Scanning
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: .loomscan-reports/result.sarif
-
-      - name: Upload JSON report artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: loomscan-report
-          path: loomscan-report.json
-```
-
-### Strict CI gate (block on scanner errors too)
-
-```yaml
-- name: Run LoomScan (strict)
-  run: |
-    loomscan check --repo . --base origin/main --strict-scanners --strictness 6
-    # Exit 1 = findings block, Exit 3 = scanner errors block
-```
-
-### Using the LoomScan GitHub Action
-
-LoomScan includes a ready-made action at `.github/actions/loomscan-action/`:
-
-```yaml
-- uses: ./.github/actions/loomscan-action
-  with:
-    args: 'check --base origin/main --strict-scanners'
-```
-
----
-
-## 13. LLM Tie-Breaker (Optional)
-
-For UNCERTAIN findings (where the FIS can't decide), LoomScan can call a local LLM via Ollama to make the final call.
-
-### Setup
-
-```bash
-# 1. Install Ollama (https://ollama.ai)
-# 2. Pull a model
-ollama pull qwen3-coder-1.5b
-
-# 3. Enable in .loomscan.yaml:
-cat >> .loomscan.yaml << 'EOF'
-llm:
-  enabled: true
-  provider: ollama
-  model: qwen3-coder-1.5b
-  endpoint: http://localhost:11434
-  prm_threshold: 0.6
-  only_on_uncertain: true
-EOF
-
-# 4. Run with LLM tie-breaking
-loomscan check --repo . --full
-# The TUI will show "LLM invoked: yes" if any finding needed tie-breaking
-```
-
-### How it works
-
-1. FIS produces an UNCERTAIN decision for a finding
-2. LoomScan sends the finding + surrounding code context to the LLM
-3. LLM proposes a hypothesis ("this function crashes on None input")
-4. LoomScan **verifies** the hypothesis by executing it (LLM-as-oracle with verified reasoning)
-5. Only confirmed bugs are reported
-
-### Process Reward Model (PRM)
-
-LoomScan uses a Process Reward Model to score the LLM's reasoning quality. Only reasoning with PRM score > `prm_threshold` (default 0.6) is trusted.
-
-### Privacy
-
-All LLM calls go to your local Ollama instance — no data leaves your machine.
-
----
-
-## 14. Language Coverage
-
-LoomScan analyzes 7+ programming languages. Different layers cover different languages:
-
-| Language | L0 Patterns | Taint Tracking | CPG Queries | Fuzzing (L4) | Symbolic (L6) | IaC (L0e) |
-|----------|:-----------:|:--------------:|:-----------:|:------------:|:-------------:|:---------:|
-| **Python** | ✅ | ✅ | ✅ | ✅ | — | — |
-| **JavaScript/TS** | ✅ | ✅ | ✅ | — | — | — |
-| **Go** | ✅ | — | — | — | — | — |
-| **Java** | ✅ | — | — | — | — | — |
-| **C/C++ | ✅ | — | ✅ | — | — | — |
-| **Rust** | — | — | — | — | ✅ (Kani) | — |
-| **Terraform** | — | — | — | — | — | ✅ |
-| **Dockerfile** | — | — | — | — | — | ✅ |
-| **K8s YAML** | — | — | — | — | — | ✅ |
-
-### What "L0 Patterns" means per language
-
-- **Python**: 88+ Semgrep rules + custom pattern matchers (eval, exec, os.system, crypto misuse, SQL injection, etc.)
-- **JavaScript/TS**: XSS, prototype pollution, injection, React security (JSX auth), 12 multi-line pattern matchers
-- **Go**: crypto, auth, concurrency patterns
-- **Java**: SpotBugs-ported rules (injection, null deref, resource leaks)
-- **C/C++ | Flawfinder-inspired: dangerous functions (strcpy, sprintf, system, gets)
-
-### Why fuzzing is Python-only
-
-Fuzzing requires runtime execution. Python is interpreted, so LoomScan can `import` the target module and call its functions directly. Compiled languages (Go, Java, C/C++) would require their toolchains + build systems + language-specific harness generation, which would break LoomScan's "works on any laptop, offline" design.
-
-For Rust, LoomScan uses **Kani** (L6) instead of fuzzing — Kani mathematically *proves* absence of certain bugs (overflow, panic, contract violations), which is more powerful than fuzzing.
-
----
-
-## 15. Fuzzing (L4 Layer)
-
-### What it does
-
-The L4 fuzz layer:
-1. Picks changed Python functions from the git diff
-2. Generates a fuzz harness (imports the function, calls it with `FuzzedDataProvider` inputs)
-3. Runs the harness for ~10 seconds, generating thousands of random inputs
-4. Reports any crash (unhandled exception) as a CRITICAL finding (`L4.fuzz.crash`, CWE-20)
-
-### Backends (3-tier fallback)
-
-| Backend | Platform | Algorithm | Speed |
-|---------|----------|-----------|-------|
-| **atheris** | Linux only | libFuzzer (C++ instrumentation) | ~1-5M iter/sec |
-| **coverage-python** | All platforms | `sys.monitoring` BRANCH events + corpus mutation | ~50-100K iter/sec |
-| **random-python** | All platforms | Random mutation (legacy fallback) | ~50K iter/sec |
-
-LoomScan auto-detects the best available backend. On Windows/macOS, it uses `coverage-python` (the built-in pure-Python fuzzer).
-
-### Enabling fuzzing
-
-```bash
-# Option 1: Use strictness level 8+ (enables L4 automatically)
-loomscan check --repo . --full --strictness 8
-
-# Option 2: Enable L4 in .loomscan.yaml
-loomscan strictness --repo . --level 8
-# Or manually edit .loomscan.yaml:
-# L4_fuzz: { enabled: true, timeout_seconds: 60 }
-```
-
-### What it finds
-
-```python
-# This function has a bug: crashes on empty input
-def process(data):
-    return data[0].upper()  # IndexError if data is empty
-
-# Static analysis might miss this — the bug only triggers at runtime.
-# Fuzzing finds it in seconds.
-```
-
-The fuzzer finds:
-- **Surface crashes**: empty input, None, type confusion
-- **Deep bugs**: requires specific input structure (via dictionary mutation with 60+ tokens like `ADMIN`, `../`, `' OR 1=1--`)
-- **Boundary bugs**: off-by-one, exact-length requirements
-
-### Custom fuzz harnesses
-
-LoomScan auto-generates a naive harness, but you can provide a custom one:
-
-```python
-# tests/fuzz/process_fuzz.py
-import sys
-from loomscan.fuzz_coverage import fuzz_coverage, FuzzedDataProvider
-from app import process
-
-def test_one_input(data):
-    fdp = FuzzedDataProvider(data)
-    s = fdp.consume_unicode_no_surrogates(fdp.remaining_bytes() or 1)
-    try:
-        # Call with a string
-        process(s)
-    except (TypeError, ValueError):
-        pass  # expected — not a bug
-    except Exception:
-        raise  # unexpected — that's the bug
-
-if __name__ == '__main__':
-    duration = int(sys.argv[1]) if len(sys.argv) > 1 else 10
-    crash = fuzz_coverage(test_one_input, duration_seconds=duration)
-    if crash:
-        print(f"CRASH:{crash}", file=sys.stderr)
-        sys.exit(1)
-    sys.exit(0)
-```
-
-Place it at `tests/fuzz/<function_name>_fuzz.py` and LoomScan will use it instead of auto-generating.
-
-### Fuzzer stats
-
-The fuzzer reports stats via the `L4.fuzz.backend` INFO finding:
-- Iterations run
-- Corpus size
-- Coverage branches tracked
-- Backend used (`sys.monitoring` or `sys.settrace`)
-
-### Limitations
-
-- **Python only** (see [§14](#14-language-coverage))
-- **No C-level memory bugs**: Can't detect use-after-free, buffer overflow in C extensions (atheris with ASan can)
-- **Slower than atheris**: ~50-100K iter/sec vs atheris's 1-5M iter/sec
-- **10-second default duration**: Increase via `L4_fuzz.timeout_seconds` in config
-
----
-
-## 16. Scanner Health Tracking
-
-### The problem it solves
-
-Previously, if a scanner failed (e.g., missing import, parse error, network issue), the failure was silently swallowed. You'd get fewer findings without knowing why.
-
-### How it works (v3.1+)
-
-Every scanner failure is now:
-1. **Logged** (WARNING level)
-2. **Tracked** in `PipelineResult.scanner_health`
-3. **Surfaced** in the TUI, JSON, SARIF, and HTML reports
-4. **Gatable** via `--strict-scanners` (exit code 3)
-
-### Where to see it
-
-| Surface | What you see |
-|---------|-------------|
-| **TUI** (default) | Yellow banner: "⚠ N scanner(s) failed" |
-| **TUI** (`--detailed`) | Full Scanner Health table with error types and messages |
-| **JSON** | `scanner_health[]` array + `scanner_error_count` |
-| **SARIF** | `executionSuccessful: false` + `toolExecutionNotifications[]` |
-| **HTML** | Yellow warning banner + Scanner Health section |
-
-### CI gate
-
-```bash
-loomscan check --repo . --full --strict-scanners
-# Exit 3 if any scanner failed — surfaces previously-silent failures as a build breaker
-```
-
-### Debug logging
-
-```bash
-loomscan check --repo . --full -v
-# Shows DEBUG-level diagnostics: optional-parser failures, per-file scan errors
-```
-
----
-
-## 17. Advanced Commands Reference
-
-LoomScan has 73+ commands. Here are the most useful ones beyond `check`:
-
-### Analysis commands
-
-```bash
-loomscan taint --repo .                # Interprocedural taint tracking (Python)
-loomscan cpg --repo .                  # Code Property Graph queries (Joern-style)
-loomscan nullness --repo .             # Sound nullness analysis (NilAway-inspired)
-loomscan typestate --repo .            # State machine violation detection
-loomscan symbolic --repo .             # Z3 symbolic execution + abstract interpretation
-loomscan metamorphic --repo .          # Oracle-free bug detection
-loomscan differential --repo .         # Refactor verification (old vs new)
-loomscan concurrency --repo .          # Async/concurrency bug detection
-loomscan crypto --repo .               # Cryptographic correctness audit
-loomscan code-quality --repo .         # 111+ multi-language quality rules
-loomscan duplicates --repo .           # Find duplicated code blocks
-loomscan deadcode --repo .             # Runtime dead code analysis
-loomscan toxicity --repo .             # Code toxicity (nocuous/codehawk-inspired)
-loomscan consistency --repo .          # Codebase consistency (credo-inspired)
-loomscan architecture --repo .         # Architecture enforcement (rev-dep-inspired)
-loomscan contracts --repo .            # Design-by-contract analysis (deal-inspired)
-loomscan doc-audit --repo .            # Documentation audit (Valknut-inspired)
-loomscan ffi-check --repo .            # Cross-language FFI boundary analysis
-```
-
-### Security commands
-
-```bash
-loomscan iac --repo .                  # Terraform/Dockerfile/K8s scanner (71 rules)
-loomscan pii --repo .                  # PII detection (pii-shield-inspired)
-loomscan malicious --repo .            # Malicious package patterns (aura-inspired)
-loomscan missing-patches --repo .      # Missing security patches (Vanir-inspired)
-loomscan modern --repo .               # Modern attack surfaces (LLM, GraphQL, etc.)
-loomscan history-scan --repo .         # Scan git history for leaked secrets
-loomscan pysa --repo .                 # Pysa (Meta OSS) taint analysis
-loomscan maven-cve --repo .            # Scan pom.xml for Maven CVEs
-loomscan supply-chain --repo .         # Dependency CVEs, typosquats, EOL, licenses
-```
-
-### Management commands
-
-```bash
-loomscan init --repo .                 # Create .loomscan.yaml config
-loomscan install-tools                 # Auto-install gitleaks, semgrep, etc.
-loomscan doctor                        # Check what tools are available
-loomscan baseline --repo . show        # Manage the issue baseline
-loomscan audit --repo . show           # Tamper-evident audit log
-loomscan issue --repo . list           # Issue store (CodeChecker-inspired)
-loomscan hotspot --repo . list         # Security hotspots (SonarQube-style)
-loomscan cache --repo . clear          # Function-level result cache
-loomscan strictness --repo .           # Show/set strictness level
-loomscan profile --repo .              # Configuration profiles
-loomscan rules --repo .                # Manage rule packs (Semgrep + Rego)
-loomscan suppressions --repo .         # Inline suppressions
-loomscan feedback --repo .             # Track precision/recall
-loomscan tuning                        # FIS auto-tuning
-```
-
-### Utility commands
-
-```bash
-loomscan sbom --repo .                 # Generate SBOM (CycloneDX/SPDX)
-loomscan dashboard --repo .            # Generate HTML dashboard
-loomscan fix --repo .                  # Apply auto-fixes
-loomscan pre-commit --repo .           # Run as pre-commit hook
-loomscan watch --repo .                # Watch and re-scan on save
-loomscan lsp                           # Language server (VS Code/Neovim integration)
-loomscan bootstrap                     # One-time setup (invariant inference, etc.)
-loomscan optimize --repo .             # Parallel scan with file-level cache
-loomscan trace --repo .                # Trace a finding's lifecycle
-loomscan rca --repo .                  # Root cause analysis (Vitrage-inspired)
-loomscan impact --repo .               # Impact analysis (gossiphs-inspired)
-loomscan similar --repo .              # Find similar code snippets
-loomscan source-discovery --repo .     # Discover taint sources
-loomscan llm-verify --repo .           # LLM-as-oracle with verified reasoning
-loomscan gnn --repo .                  # GNN-on-CPG scoring
-```
-
-### Update commands
-
-```bash
-loomscan update-cves                   # Update CVE database from OSV.dev
-loomscan rule-lint                     # Lint custom rule files
-```
-
----
-
-## 18. Troubleshooting
-
-### "Not a git repo"
+### Architecture
 
 ```
-Error: Not a git repo: /path/to/repo
+loomscan/
+├── orchestrator.py          # Main pipeline (run_full / run)
+├── yaml_engine.py           # YAML rule pack execution
+├── rules/__init__.py        # Pack registration and selection
+├── business_logic_miner.py  # Cross-line BL pattern detection
+├── codebase_understanding.py # Entity tracking + dead persistence
+├── gnn_cpg.py               # Real GNN (torch-geometric)
+├── brain/                   # Fuzzy aggregation + Bayesian
+│   ├── it2_fis.py           # Interval type-2 FIS
+│   ├── bayesian.py          # BBN + ExplainableAggregator
+│   └── membership.py        # IT2 membership functions
+├── cli.py                   # CLI commands (3,600+ LOC)
+├── installer.py             # Tool installation with SHA256
+├── report/                  # HTML/JSON/SARIF generators
+├── layers/                  # Analysis layers
+│   ├── l0_fast.py           # SAST (YAML rules)
+│   ├── l8_autofix.py        # Auto-fix patterns
+│   └── ...
+├── v4_aggregator.py         # v7.5.6: Replaces v4_restored.py
+└── rules/packs/             # 42 YAML rule packs (2,473 rules)
 ```
 
-**Cause**: LoomScan needs a git repo (it analyzes diffs by default).
-**Fix**: Either `git init` the directory, or use `--full` for a full-repo scan.
+### Pipeline Flow
 
-### "atheris not installed" (L4 fuzzing)
+1. **L0 Fast (SAST)** — 2,473 YAML rules via Rust/Python engine
+2. **L0b Supply Chain** — dependency CVE checking via OSV API
+3. **Advanced Detection** — TOCTOU, BL miner, field taint, integer overflow, GNN
+4. **L5 Policy** — config checks (Spring Actuator, CORS, etc.)
+5. **L8 Auto-Fix** — 107 fix patterns
+6. **Aggregation** — IT2-FIS + BBN + counterfactual → final decision
+7. **Report** — HTML/JSON/SARIF
 
-**Cause**: atheris only works on Linux. On Windows/macOS, LoomScan automatically uses its built-in pure-Python fuzzer.
-**Fix**: No action needed — LoomScan handles this automatically. The `L4.fuzz.backend` INFO finding tells you which backend is active.
+### Deprecation Notices
 
-### Too many findings (overwhelming)
-
-**Fix 1**: Use a lower strictness level:
-```bash
-loomscan check --repo . --full --strictness 1   # critical only
-```
-
-**Fix 2**: Use baseline mode (only new issues):
-```bash
-loomscan check --repo . --full --baseline
-```
-
-**Fix 3**: Filter by severity in the JSON output:
-```bash
-loomscan check --repo . --full --json | python -c "
-import json, sys
-data = json.load(sys.stdin)
-critical = [f for f in data['findings'] if f['severity'] == 'critical']
-print(f'{len(critical)} critical findings:')
-for f in critical:
-    print(f'  {f[\"rule_id\"]} at {f[\"file\"]}:{f[\"start_line\"]}')
-"
-```
-
-### Scanner failures (previously silent)
-
-**Symptom**: Yellow banner in TUI: "⚠ N scanner(s) failed"
-**Cause**: A scanner encountered an error (missing import, parse error, network issue).
-**Diagnosis**:
-```bash
-loomscan check --repo . --full --detailed -v
-# The -v flag shows DEBUG-level diagnostics
-# The --detailed flag shows the full Scanner Health table
-```
-**Fix**: Read the error message in the Scanner Health table. Common causes:
-- Missing optional dependency → `pip install -e ".[layer-name]"`
-- Malformed source file → fix the file
-- Network issue (OSV.dev) → check internet connection or use cached data
-
-### Scan is slow
-
-**Fix 1**: Use diff mode instead of full-repo:
-```bash
-loomscan check --repo . --base main    # only scan the diff
-```
-
-**Fix 2**: Use a lower strictness level:
-```bash
-loomscan check --repo . --full --strictness 3   # skips L4-L7
-```
-
-**Fix 3**: Use the file-level cache:
-```bash
-loomscan optimize --repo .             # parallel scan with caching
-```
-
-**Fix 4**: Disable slow layers in `.loomscan.yaml`:
-```yaml
-layers:
-  L6_symbolic: { enabled: false, timeout_seconds: 120 }
-  L7_simulation: { enabled: false, timeout_seconds: 300 }
-```
-
-### Too many false positives
-
-**Fix 1**: Use baseline mode to suppress known issues:
-```bash
-loomscan check --repo . --full --baseline
-```
-
-**Fix 2**: Use the feedback loop to train the FP learner:
-```bash
-loomscan feedback --repo . mark-fp <fingerprint>   # mark as false positive
-loomscan feedback --repo . stats                   # see precision/recall
-```
-
-**Fix 3**: Suppress inline:
-```python
-# loomscan-ignore-next-line
-eval(user_input)  # LoomScan won't flag this
-```
-
-**Fix 4**: Use the precision engine:
-```bash
-loomscan precision --repo .           # rule mining, FP learning, calibration
-```
-
-### Config not being picked up
-
-**Cause**: LoomScan looks for `.loomscan.yaml` in the repo root.
-**Fix**:
-```bash
-loomscan init --repo . --force        # recreate with defaults
-# Edit .loomscan.yaml, then verify:
-loomscan strictness --repo .          # should show your level
-```
-
-### Reports not being generated
-
-**Cause**: Reports go to `<repo>/.loomscan-reports/`.
-**Fix**:
-```bash
-ls .loomscan-reports/                 # should have report.html, result.json, result.sarif
-loomscan dashboard --repo .           # generate dashboard.html
-```
-
-### LLM tie-breaker not working
-
-**Cause**: Ollama not running or model not pulled.
-**Fix**:
-```bash
-ollama list                       # verify model is available
-ollama serve                      # start Ollama server
-# Test the endpoint:
-curl http://localhost:11434/api/generate -d '{"model":"qwen3-coder-1.5b","prompt":"test"}'
-```
-
----
-
-## 19. How It Works Internally
-
-### Pipeline flow
-
-```
-git diff (or full repo)
-   │
-   ▼
-[tree-sitter diff slicer] — Python, JS/TS, Go, Java, C, C++
-   │
-   ├─► L0  Fast hooks + multi-language linters + bundled Semgrep rule packs (88 rules)
-   ├─► L0  CPG-based cross-file taint tracking
-   ├─► L0  Typestate analysis (state machine violations)
-   ├─► L0  Nullness analysis (NilAway-inspired)
-   ├─► L0  Modern attack surface detection (LLM, GraphQL, SSRF, etc.)
-   ├─► L0  Code quality (111+ rules)
-   ├─► L0  Interprocedural taint tracking
-   ├─► L0  JS pattern scanner (12 multi-line matchers)
-   ├─► L0  JS CPG taint tracking (cross-file XSS/injection)
-   ├─► L0  Missing security patches (Vanir-inspired)
-   ├─► L0  Malicious package patterns (aura-inspired)
-   ├─► L0  Flawfinder (C/C++ dangerous functions)
-   ├─► L0  Design-by-contract verification (deal-inspired)
-   ├─► L0  PII detection (pii-shield-inspired)
-   ├─► L0  Architecture enforcement (rev-dep-inspired)
-   ├─► L0  Documentation audit (Valknut-inspired)
-   ├─► L0  HTML/config scanner (CSP, security headers, .env secrets)
-   ├─► L0  Counterfactual mutation FP filtering
-   ├─► L0  Tree-sitter AST analysis
-   ├─► L0b Supply chain (CVEs, typosquats, EOL, licenses)
-   ├─► L0c Dependencies (outdated, deprecated)
-   ├─► L0d Behavioral (churn, hotspots, commit risk)
-   ├─► L0e IaC (Terraform, Dockerfile, K8s — 71 rules)
-   ├─► L0f Commit risk (secret leaks in history)
-   ├─► L1  Property tests (Hypothesis)
-   ├─► L2  Mutation testing (mutmut)
-   ├─► L3  Invariant verification
-   ├─► L4  Directed fuzzing (atheris or pure-Python, Python only)
-   ├─► L5  Policy enforcement (OPA/Rego)
-   ├─► L6  Symbolic verification (Z3, Kani for Rust)
-   ├─► L7  Concurrency simulation
-   │
-   ▼
-[Counterfactual mutation FP filter] — mutates code, re-runs detector
-   │
-   ▼
-[Precision pipeline] — FP learner + confidence calibrator + corroboration
-   │
-   ▼
-[IT2-FIS aggregator] — type-2 fuzzy inference system
-   │  inputs: severity, confidence, source reliability, corroboration
-   │  output: BLOCK / WARN / PASS / UNCERTAIN
-   ▼
-[Optional LLM tie-breaker] — for UNCERTAIN findings only
-   │  LLM proposes hypothesis → LoomScan verifies by execution
-   ▼
-[Issue store] — tamper-evident, tracks new vs recurring issues
-   │
-   ▼
-[Reports] — TUI + JSON + SARIF + HTML
-```
-
-### The IT2-FIS aggregator
-
-Each finding gets 4 inputs scored 0-1:
-- **Severity**: critical=0.95, high=0.75, medium=0.50, low=0.30, info=0.10
-- **Confidence**: the layer's self-reported confidence
-- **Source reliability**: historical precision/recall of the layer
-- **Corroboration**: did other layers find the same issue?
-
-The FIS applies fuzzy rules like:
-- "If severity is high AND confidence is certain → at least warn"
-- "If severity is high AND confidence is indirect → warn"
-- "If severity is low AND confidence is speculative → pass"
-
-The output is an **interval** [lower, upper] (type-2 fuzzy), and the midpoint determines the decision:
-- midpoint < 0.3 → PASS
-- 0.3 ≤ midpoint < 0.6 → WARN
-- midpoint ≥ 0.6 → BLOCK
-- If upper - lower > 0.4 → UNCERTAIN (triggers LLM tie-breaker)
-
-### Scanner health tracking
-
-Every scanner failure is:
-1. Logged via Python's `logging` module (WARNING level)
-2. Appended to `Orchestrator._scanner_health` list
-3. Copied to `PipelineResult.scanner_health` at the end of the run
-4. Surfaced in TUI/JSON/SARIF/HTML reports
-
-This ensures previously-silent failures are visible.
-
----
-
-## 20. Glossary
-
-| Term | Definition |
-|------|-----------|
-| **IT2-FIS** | Interval Type-2 Fuzzy Inference System — the aggregator that scores findings |
-| **CPG** | Code Property Graph — merges AST + CFG + PDG into one graph (Joern-style) |
-| **Taint tracking** | Following data from source (user input) to sink (eval, SQL, etc.) |
-| **Typestate** | State machine analysis — e.g., file must be opened before reading |
-| **Metamorphic testing** | Oracle-free testing — e.g., `sort(sort(x)) == sort(x)` |
-| **Differential testing** | Comparing old vs new function behavior after a refactor |
-| **PRM** | Process Reward Model — scores LLM reasoning quality |
-| **SBOM** | Software Bill of Materials — list of all dependencies |
-| **SARIF** | Static Analysis Results Interchange Format — industry standard for static analysis output |
-| **Strictness level** | PHPStan-inspired 1-9 scale controlling how many layers run |
-| **Baseline** | Known-issues list — baseline mode only flags NEW issues |
-| **Scanner health** | Tracking of scanner failures (v3.1+) so they're not silently swallowed |
-| **Counterfactual mutation** | FP filtering — mutates the code, re-runs detector, if finding disappears it was a TP |
-| **Corroboration** | Whether multiple layers found the same issue (boosts confidence) |
-| **Blast radius** | How wide an impact the bug has: function, module, or system |
-| **FuzzedDataProvider** | API for consuming bytes as typed values (string, int, float, etc.) — atheris-compatible |
-| **Coverage-guided** | Fuzzer tracks which lines/branches execute, steers mutation toward uncovered code |
-| **Dictionary mutation** | Fuzzer inserts known crash-triggering tokens (ADMIN, ../, ' OR 1=1--, etc.) |
-
----
-
-## Quick Reference Card
-
-```bash
-# === Daily workflow ===
-loomscan check --repo . --full                          # full scan (default minimal output)
-loomscan check --repo . --base main                     # diff scan (PR review)
-loomscan check --repo . --staged                        # staged changes (pre-commit)
-loomscan check --repo . --full --detailed               # full findings in terminal
-loomscan check --repo . --full --json > report.json     # JSON for CI
-loomscan check --repo . --full --quiet                  # just the decision
-
-# === Strictness ===
-loomscan strictness --repo .                            # show current level
-loomscan strictness --repo . --level 7                  # set level
-loomscan check --repo . --full --strictness 9           # override per-run
-
-# === Baseline ===
-loomscan check --repo . --full                          # establish baseline
-loomscan check --repo . --full --baseline               # only new issues
-
-# === Reports ===
-loomscan dashboard --repo .                             # HTML dashboard
-cat .loomscan-reports/result.json | python -m json.tool # view JSON
-# .loomscan-reports/result.sarif                        # for VS Code / GitHub
-
-# === Scanner health ===
-loomscan check --repo . --full --strict-scanners        # exit 3 on scanner errors
-loomscan check --repo . --full -v                       # DEBUG logging
-
-# === Auto-fix ===
-loomscan fix --repo .                                   # stage fixes for review
-loomscan fix --repo . --apply                           # apply directly
-
-# === Setup ===
-loomscan init --repo .                                  # create .loomscan.yaml
-loomscan install-tools                                  # install gitleaks, semgrep, etc.
-loomscan doctor                                         # check what's installed
-
-# === LLM tie-breaker ===
-ollama pull qwen3-coder-1.5b                        # pull model
-# Set llm.enabled: true in .loomscan.yaml
-loomscan check --repo . --full                          # LLM invoked for UNCERTAIN findings
-```
-
----
-
-**LoomScan v3.2** — 235 tests passing, 73+ commands, 8 analysis layers, cross-platform. For questions, run `loomscan <command> --help` on any command.
+- `v4_restored.py` — deprecated since v7.4. v7.5.6: orchestrator now imports from `v4_aggregator.py` instead. Will be removed in v8.0.
+- `GNNOnCPG` class name — renamed to `HeuristicRiskScorer` in v7.3.4. Backward-compat alias preserved. Will be removed in v8.0.

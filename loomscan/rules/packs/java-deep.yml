@@ -978,7 +978,9 @@ rules:
     cwe: CWE-382
   pattern: System\.exit\s*\(
   severity: low
-- id: java-resttemplate-no-timeout
+- id: java-resttemplate-no-timeout-deep
+  # v7.5.3: Renamed from java-resttemplate-no-timeout to avoid cross-pack duplicate
+  # (java-production-incidents.yml has the canonical version with better message).
   message: RestTemplate without timeout config — will hang indefinitely if downstream
     service is slow. Set connectTimeout and readTimeout.
   metadata:

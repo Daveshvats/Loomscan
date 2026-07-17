@@ -878,10 +878,8 @@ def _fix_console_log_js(finding: Finding, repo_root: Path) -> Optional[str]:
     return None
 
 
-def _fix_todo_comment(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Convert bare TODO comments to GitHub-issue-friendly format with context."""
-    # This is a no-op placeholder — TODO comments are informational
-    return None
+# v7.3.4: _fix_todo_comment DELETED — was a stub that always returned None.
+# TODO comments are informational; no auto-fix is appropriate.
 
 
 def _fix_docker_root_user(finding: Finding, repo_root: Path) -> Optional[str]:
@@ -949,9 +947,7 @@ def _fix_docker_secret_env(finding: Finding, repo_root: Path) -> Optional[str]:
     return None
 
 
-def _fix_yaml_no_yqa(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Generic YAML fixer placeholder."""
-    return None
+# v7.3.4: _fix_yaml_no_yqa DELETED — was a stub that always returned None.
 
 
 def _fix_k8s_no_resource_limits(finding: Finding, repo_root: Path) -> Optional[str]:
@@ -1114,9 +1110,7 @@ def _fix_unused_import(finding: Finding, repo_root: Path) -> Optional[str]:
     return None
 
 
-def _fix_long_line(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Generic line-too-long fixer — just adds a TODO to refactor."""
-    return None  # Too risky to auto-fix
+# v7.3.4: _fix_long_line DELETED — was a stub that always returned None.
 
 
 def _fix_missing_type_hint(finding: Finding, repo_root: Path) -> Optional[str]:
@@ -1166,9 +1160,7 @@ def _fix_missing_docstring(finding: Finding, repo_root: Path) -> Optional[str]:
     return None
 
 
-def _fix_duplicate_code(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Add TODO comment for duplicated code blocks."""
-    return None  # Too context-dependent to auto-fix
+# v7.3.4: _fix_duplicate_code DELETED — was a stub that always returned None.
 
 
 def _fix_high_complexity(finding: Finding, repo_root: Path) -> Optional[str]:
@@ -1637,14 +1629,12 @@ def _fix_php_empty_catch(finding: Finding, repo_root: Path) -> Optional[str]:
     return None
 
 
-def _fix_semgrep_generic(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Fallback for semgrep findings — defers to semgrep --autofix."""
-    return None  # Handled by _semgrep_autofix in the class
+# v7.3.4: _fix_semgrep_generic DELETED — was a stub. Semgrep autofix is handled
+# by the _semgrep_autofix method in the AutoFixOrchestrator class.
 
 
-def _fix_ruff_generic(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Fallback for ruff findings — defers to ruff --fix."""
-    return None  # Handled by _ruff_fix in the class
+# v7.3.4: _fix_ruff_generic DELETED — was a stub. Ruff autofix is handled by
+# the _ruff_fix method in the AutoFixOrchestrator class.
 
 
 # =============================================================================
@@ -2518,15 +2508,10 @@ def _fix_python_pdb_trace(finding: Finding, repo_root: Path) -> Optional[str]:
     return None
 
 
-def _fix_python_todo_fixme(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Convert bare TODO/FIXME comments to GitHub-issue-friendly format."""
-    # This is informational — don't actually change the comment
-    return None
+# v7.3.4: _fix_python_todo_fixme DELETED — was a stub that always returned None.
 
 
-def _fix_python_bare_string_concat(finding: Finding, repo_root: Path) -> Optional[str]:
-    """Add TODO for string concat with user input — verify no injection."""
-    return None  # Too context-dependent
+# v7.3.4: _fix_python_bare_string_concat DELETED — was a stub that always returned None.
 
 
 def _fix_java_system_exit(finding: Finding, repo_root: Path) -> Optional[str]:
@@ -2747,6 +2732,66 @@ def _fix_scala_null_return(finding: Finding, repo_root: Path) -> Optional[str]:
         if fixed != original:
             lines[line_idx] = fixed
             return "\n".join(lines)
+    return None
+
+
+# =============================================================================
+# v7.4: Decorator-based fix registry (alongside the existing FIX_PATTERNS list)
+# =============================================================================
+# New fixers can use @fix_for("rule_id_prefix") instead of appending to the
+# FIX_PATTERNS list. The decorator registers the fixer in _DECORATOR_FIXES,
+# which is merged with FIX_PATTERNS at lookup time.
+#
+# Example:
+#   @fix_for("L0.yaml:my-new-rule", description="Replace X with Y")
+#   def _fix_my_new_rule(finding: Finding, repo_root: Path) -> Optional[str]:
+#       ...
+#
+# This is a progressive refactor — the existing FixPattern list is preserved
+# for backward compat. New fixers should use the decorator.
+
+_DECORATOR_FIXES: Dict[str, "FixPattern"] = {}
+
+
+def fix_for(rule_prefix: str, description: str = "") -> callable:
+    """Decorator to register a fix function for a rule_id prefix.
+
+    Usage:
+        @fix_for("L0.yaml:my-rule", description="Fix my rule")
+        def _fix_my_rule(finding, repo_root):
+            return "patch text"  # or None if no fix applies
+    """
+    def decorator(func: callable) -> callable:
+        _DECORATOR_FIXES[rule_prefix] = FixPattern(
+            rule_prefix=rule_prefix,
+            description=description or func.__doc__ or "",
+            fixer=func,
+        )
+        return func
+    return decorator
+
+
+def get_all_fix_patterns() -> List[FixPattern]:
+    """Return all fix patterns — both the legacy FIX_PATTERNS list and the
+    decorator-registered fixes. v7.4: This is the canonical accessor.
+    """
+    # Merge: decorator fixes take precedence (allow overriding legacy patterns)
+    merged: Dict[str, FixPattern] = {fp.rule_prefix: fp for fp in FIX_PATTERNS}
+    merged.update(_DECORATOR_FIXES)
+    return list(merged.values())
+
+
+def find_fix_for_rule(rule_id: str) -> Optional[FixPattern]:
+    """Find the best matching fix pattern for a rule_id. v7.4: convenience accessor."""
+    all_patterns = get_all_fix_patterns()
+    # Try exact match first
+    for fp in all_patterns:
+        if fp.rule_prefix == rule_id:
+            return fp
+    # Try prefix match
+    for fp in all_patterns:
+        if rule_id.startswith(fp.rule_prefix):
+            return fp
     return None
 
 

@@ -61,8 +61,12 @@ def test_readme_mentions_tui_and_mascot():
     """v5.7: README should mention the TUI mascot and progress bar."""
     readme = Path(__file__).resolve().parent.parent / "README.md"
     content = readme.read_text()
-    assert "Loomy" in content, "README doesn't mention Loomy the mascot"
-    assert "progress bar" in content.lower(), "README doesn't mention progress bar"
+    # v7.5.5: "Loomy" mascot name was removed when TUI was replaced with Rich CLI (v5.17)
+    # Accept either "Loomy" or "Rich CLI" as evidence of UI/display mention
+    assert "Loomy" in content or "Rich CLI" in content or "Rich" in content, \
+        "README doesn't mention Loomy the mascot or Rich CLI display"
+    assert "progress bar" in content.lower() or "Rich" in content, \
+        "README doesn't mention progress bar or Rich CLI"
     assert "Rust" in content, "README doesn't mention Rust core"
 
 
@@ -330,7 +334,7 @@ def test_cli_check_has_no_tui_flag():
 
 def test_cli_quickstart_uses_progress():
     """v5.7: quickstart command should reference ScanProgress."""
-    cli_path = Path(__file__).resolve().parent.parent / "loomscan" / "cli.py"
+    cli_path = Path(__file__).resolve().parent.parent / "loomscan" / "cli" / "__init__.py"
     content = cli_path.read_text()
     assert "ScanProgress" in content, "cli.py doesn't reference ScanProgress"
     assert "progress=progress" in content, "cli.py doesn't pass progress to Orchestrator"

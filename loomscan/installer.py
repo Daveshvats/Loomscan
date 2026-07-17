@@ -47,16 +47,25 @@ class ToolSpec:
     github_repo: str = ""  # e.g. "gitleaks/gitleaks"
     binary_name: str = ""
     # SHA256 checksums per platform (os_arch → checksum)
-    # If we don't have a checksum for a platform, we warn but still install.
+    # v7.5.1: Static pinned checksums — highest security. To populate:
+    #   loomscan install-tools --compute-checksums
+    # When populated, install REFUSES if the downloaded binary doesn't match.
     checksums: Dict[str, str] = None
+    # v7.5.1: URL to the release's checksums.txt file (medium security —
+    # protects against MITM but not a compromised release artifact + checksums
+    # together). Most GitHub releases publish a checksums.txt alongside binaries.
+    # Format: {filename}  {sha256}
+    checksum_url: str = ""
     description: str = ""
     layer: str = ""
 
 
 # Tool registry — pinned versions with SHA256 verification
-# Checksums are placeholders for the pattern; in production, fetch from release manifest.
+# v7.5.1: Binary tools now have checksum_url pointing to the release's
+# checksums.txt. Static `checksums` can be populated by a maintainer via
+# `loomscan install-tools --compute-checksums` for maximum security.
 TOOLS: Dict[str, ToolSpec] = {
-    # --- Python tools (pip-installable) ---
+    # --- Python tools (pip-installable, no checksum needed — pip verifies) ---
     "mutmut": ToolSpec(
         name="mutmut", version="3.0.0", kind="python",
         description="Mutation testing for Python (L2)", layer="L2",
@@ -74,35 +83,44 @@ TOOLS: Dict[str, ToolSpec] = {
         description="Property-based testing (L1)", layer="L1",
     ),
 
-    # --- Go binaries (download from GitHub releases) ---
+    # --- Go binaries (download from GitHub releases with checksum verification) ---
     "gitleaks": ToolSpec(
         name="gitleaks", version="8.18.0", kind="binary",
         github_repo="gitleaks/gitleaks",
         binary_name="gitleaks",
+        # v7.5.1: GitHub releases publish checksums.txt alongside binaries
+        checksum_url="https://github.com/gitleaks/gitleaks/releases/download/v8.18.0/gitleaks_8.18.0_checksums.txt",
         description="Secret detection in source (L0)", layer="L0",
     ),
     "semgrep": ToolSpec(
         name="semgrep", version="1.60.0", kind="binary",
         github_repo="semgrep/semgrep",
         binary_name="semgrep",
+        # v7.5.4: semgrep is installed via pip when [semgrep] extra is used.
+        # For binary download, we use the checksum_url from the GitHub release.
+        checksum_url="https://github.com/semgrep/semgrep/releases/download/v1.60.0/shasums.txt",
         description="Multi-language SAST (L0)", layer="L0",
     ),
     "osv-scanner": ToolSpec(
         name="osv-scanner", version="1.7.0", kind="binary",
         github_repo="google/osv-scanner",
         binary_name="osv-scanner",
+        checksum_url="https://github.com/google/osv-scanner/releases/download/v1.7.0/osv-scanner_1.7.0_checksums.txt",
         description="Multi-language dependency CVE scanner (L0b)", layer="L0b",
     ),
     "opa": ToolSpec(
         name="opa", version="0.65.0", kind="binary",
         github_repo="open-policy-agent/opa",
         binary_name="opa",
+        # v7.5.4: OPA publishes checksums.txt in releases
+        checksum_url="https://github.com/open-policy-agent/opa/releases/download/v0.65.0/checksums.txt",
         description="Open Policy Agent — Rego policy engine (L5)", layer="L5",
     ),
     "trivy": ToolSpec(
         name="trivy", version="0.50.0", kind="binary",
         github_repo="aquasecurity/trivy",
         binary_name="trivy",
+        checksum_url="https://github.com/aquasecurity/trivy/releases/download/v0.50.0/trivy_0.50.0_checksums.txt",
         description="Multi-purpose vulnerability & misconfiguration scanner (L0b)", layer="L0b",
     ),
     "checkov": ToolSpec(
@@ -113,6 +131,7 @@ TOOLS: Dict[str, ToolSpec] = {
         name="kics", version="1.7.13", kind="binary",
         github_repo="Checkmarx/kics",
         binary_name="kics",
+        checksum_url="https://github.com/Checkmarx/kics/releases/download/v1.7.13/checksums.txt",
         description="IaC security scanner (L0e)", layer="L0e",
     ),
     "jscpd": ToolSpec(
@@ -123,6 +142,8 @@ TOOLS: Dict[str, ToolSpec] = {
         name="trufflehog", version="3.80.0", kind="binary",
         github_repo="trufflesecurity/trufflehog",
         binary_name="trufflehog",
+        # v7.5.4: trufflehog publishes checksums in the release assets
+        checksum_url="https://github.com/trufflesecurity/trufflehog/releases/download/v3.80.0/checksums.txt",
         description="Advanced secret detection (entropy + ML-like) (L0)", layer="L0",
     ),
     "pyre-check": ToolSpec(
@@ -191,6 +212,15 @@ def sha256_verify(file_path: Path, expected_checksum: str) -> bool:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest() == expected_checksum
+
+
+def sha256_file(file_path: Path) -> str:
+    """Compute the SHA256 hex digest of a file. Used for diagnostic output on verification failure."""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def download_with_progress(url: str, dest: Path, timeout: int = 60) -> bool:
@@ -315,17 +345,104 @@ def install_binary_tool(spec: ToolSpec) -> bool:
         binary_path.chmod(st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # Verify checksum if available
+    # v7.3.4: SECURITY FIX — previously, missing checksums only produced a warning
+    # and the install proceeded anyway. This is a supply-chain security bug: a
+    # compromised release artifact = code execution on every machine.
+    # Now: missing checksum FAILS the install by default. Users who want to
+    # override can set LOOMSCAN_ALLOW_UNVERIFIED_INSTALL=1 in the environment.
+    # v7.5.1: Added checksum_url fallback — downloads the release's checksums.txt
+    # and verifies against it when static `checksums` is not populated.
     expected = (spec.checksums or {}).get(platform_id)
-    if expected and not sha256_verify(binary_path, expected):
-        print(f"  CHECKSUM VERIFICATION FAILED for {spec.name}", file=sys.stderr)
-        return False
-    elif not expected:
-        print(f"  WARNING: no checksum for {spec.name} on {platform_id} — install unverified",
-              file=sys.stderr)
+    if expected:
+        # Static checksum pinned — highest security
+        if not sha256_verify(binary_path, expected):
+            print(f"  CHECKSUM VERIFICATION FAILED for {spec.name}", file=sys.stderr)
+            print(f"  expected: {expected}", file=sys.stderr)
+            print(f"  got:      {sha256_file(binary_path)}", file=sys.stderr)
+            return False
+        print(f"  ✓ checksum verified (static pin) for {spec.name} on {platform_id}")
+    elif spec.checksum_url:
+        # v7.5.1: Download checksums.txt from the release and verify
+        verified = _verify_from_checksum_url(spec, archive_path, binary_path, platform_id)
+        if verified is True:
+            print(f"  ✓ checksum verified (release checksums.txt) for {spec.name} on {platform_id}")
+        elif verified is False:
+            print(f"  CHECKSUM VERIFICATION FAILED for {spec.name} (from {spec.checksum_url})", file=sys.stderr)
+            return False
+        else:
+            # None = couldn't fetch or parse checksums.txt
+            allow_unverified = os.environ.get("LOOMSCAN_ALLOW_UNVERIFIED_INSTALL", "").lower() in ("1", "true", "yes")
+            if allow_unverified:
+                print(f"  WARNING: could not verify {spec.name} — checksums.txt fetch failed, "
+                      f"install unverified (LOOMSCAN_ALLOW_UNVERIFIED_INSTALL=1 set)", file=sys.stderr)
+            else:
+                print(f"  REFUSING to install {spec.name}: checksums.txt fetch failed and no static pin.", file=sys.stderr)
+                return False
+    else:
+        # No static checksum AND no checksum_url — refuse by default
+        allow_unverified = os.environ.get("LOOMSCAN_ALLOW_UNVERIFIED_INSTALL", "").lower() in ("1", "true", "yes")
+        if allow_unverified:
+            print(f"  WARNING: no checksum pinned for {spec.name} on {platform_id} — install unverified "
+                  f"(LOOMSCAN_ALLOW_UNVERIFIED_INSTALL=1 set)", file=sys.stderr)
+        else:
+            print(f"  REFUSING to install {spec.name}: no SHA256 checksum pinned for {platform_id}.", file=sys.stderr)
+            print(f"  This is a supply-chain security protection added in v7.3.4.", file=sys.stderr)
+            print(f"  To pin a checksum, add it to ToolSpec.checksums in loomscan/installer.py.", file=sys.stderr)
+            print(f"  Or set ToolSpec.checksum_url to the release's checksums.txt URL.", file=sys.stderr)
+            print(f"  To override (NOT RECOMMENDED), set LOOMSCAN_ALLOW_UNVERIFIED_INSTALL=1.", file=sys.stderr)
+            return False
 
     # cleanup
     archive_path.unlink(missing_ok=True)
     return True
+
+
+def _verify_from_checksum_url(spec: "ToolSpec", archive_path: Path, binary_path: Path, platform_id: str) -> Optional[bool]:
+    """v7.5.1: Download checksums.txt from spec.checksum_url and verify the binary.
+
+    Returns:
+      True  — checksum matched
+      False — checksum mismatch (binary is compromised)
+      None  — couldn't fetch or parse checksums.txt (network error, 404, etc.)
+    """
+    if not spec.checksum_url:
+        return None
+    try:
+        import urllib.request
+        print(f"  Fetching checksums from {spec.checksum_url}...", file=sys.stderr)
+        req = urllib.request.Request(spec.checksum_url, headers={"User-Agent": "loomscan-installer/7.5"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            checksums_text = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"  Could not fetch checksums.txt: {e}", file=sys.stderr)
+        return None
+
+    # Parse checksums.txt — format: "{sha256}  {filename}" or "{sha256} {filename}"
+    # Find the line matching our downloaded archive filename
+    archive_name = archive_path.name
+    binary_name = binary_path.name
+    expected_hash: Optional[str] = None
+    for line in checksums_text.strip().split("\n"):
+        parts = line.strip().split(None, 1)  # split on whitespace, max 2 parts
+        if len(parts) != 2:
+            continue
+        hash_val, filename = parts[0].strip(), parts[1].strip()
+        # Match either the archive name or the binary name
+        if filename == archive_name or filename == binary_name or filename.endswith(archive_name):
+            expected_hash = hash_val
+            break
+
+    if expected_hash is None:
+        print(f"  Could not find {archive_name} in checksums.txt", file=sys.stderr)
+        return None
+
+    actual_hash = sha256_file(binary_path)
+    if actual_hash.lower() == expected_hash.lower():
+        return True
+    print(f"  Hash mismatch for {spec.name}:", file=sys.stderr)
+    print(f"  expected: {expected_hash}", file=sys.stderr)
+    print(f"  got:      {actual_hash}", file=sys.stderr)
+    return False
 
 
 def install_tool(name: str) -> Tuple[bool, str]:

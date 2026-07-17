@@ -91,14 +91,14 @@ class KnowledgeGraphBuilder:
     def build(self, max_files=200):
         skip = {".git", "__pycache__", ".venv", "venv", "node_modules", ".loomscan-cache", "build", "dist", "target"}
         try: from .multi_lang import ALL_SOURCE_EXTS, get_language
-        except: ALL_SOURCE_EXTS = {".py", ".js", ".ts", ".go", ".java", ".c", ".cpp"}; get_language = lambda p: "python" if p.suffix == ".py" else "unknown"
+        except Exception: ALL_SOURCE_EXTS = {".py", ".js", ".ts", ".go", ".java", ".c", ".cpp"}; get_language = lambda p: "python" if p.suffix == ".py" else "unknown"
         count = 0
         for p in sorted(self.repo_root.rglob("*")):
             if not p.is_file() or any(d in p.parts for d in skip): continue
             if p.suffix.lower() not in ALL_SOURCE_EXTS or p.stat().st_size > 200000: continue
             rel = str(p.relative_to(self.repo_root))
             try: lang = get_language(p)
-            except: lang = "unknown"
+            except Exception: lang = "unknown"
             fid = f"file:{rel}"
             self.graph.add_node(KGNode(id=fid, kind="file", name=p.name, file=rel, line=1, language=lang, summary=f"Source: {p.name}", layer=self._layer(rel)))
             if lang == "python": self._parse_py(p, rel, fid)
@@ -120,7 +120,7 @@ class KnowledgeGraphBuilder:
 
     def _parse_py(self, fp, rel, fid):
         try: source = fp.read_text(encoding="utf-8", errors="replace"); tree = ast.parse(source)
-        except: return
+        except Exception: return
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 fnid = f"{rel}:{node.lineno}:{node.name}"
@@ -140,7 +140,7 @@ class KnowledgeGraphBuilder:
 
     def _parse_regex(self, fp, rel, fid, lang):
         try: source = fp.read_text(encoding="utf-8", errors="replace")
-        except: return
+        except Exception: return
         pats = {"go": r'func\s+(?:\([^)]*\)\s+)?(\w+)\s*\(', "java": r'(?:public|private|protected)\s+\w+\s+(\w+)\s*\(', "rust": r'fn\s+(\w+)\s*\(', "javascript": r'function\s+(\w+)\s*\('}
         pat = pats.get(lang, r'\b(\w+)\s*\(')
         for m in re.finditer(pat, source):

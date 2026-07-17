@@ -38,7 +38,7 @@ class LSPServer:
         if content_length == 0: return None
         body = sys.stdin.read(content_length)
         try: return json.loads(body)
-        except: return None
+        except Exception: return None
 
     def _send_message(self, message: dict):
         body = json.dumps(message)
